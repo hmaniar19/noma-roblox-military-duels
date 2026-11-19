@@ -26,7 +26,9 @@ The judge must be a different model family than the builder, so no model grades 
 
 | Builder | Judge (`JUDGE_CMD`) | Holdout, every 5th run |
 |---|---|---|
-| Claude (phase 1) | `grok -m grok-4.7 --permission-mode plan` (read-only) | `codex exec -` |
-| Grok 4.7 (`omp --model grok-4.7`) | `claude -p` | `codex exec -` |
+| Claude (phase 1) | `codex exec -s read-only -` | blank |
+| Grok 4.7 (`omp --model grok-4.7`) | `codex exec -s read-only -` or `claude -p` | the other one |
+
+Grok works as the builder but not as the judge: `grok -p` gave no answer to the ~86 KB scoring prompt within 5 minutes.
 
 Costs grow with the size of `src/`, because every run sends the whole source to the judge 3 times.
