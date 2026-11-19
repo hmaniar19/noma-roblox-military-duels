@@ -17,6 +17,15 @@
         "Client": {
           "$path": "src/client"
         }
+      },
+      "$properties": {
+        "GameSettingsAvatar": "R15",
+        "CharacterUseJumpPower": true
+      },
+      "StarterCharacterScripts": {
+        "Health": {
+          "$className": "Script"
+        }
       }
     },
     "Workspace": {
@@ -28,6 +37,11 @@
       "$properties": {
         "GlobalShadows": true,
         "Technology": "Future"
+      }
+    },
+    "Players": {
+      "$properties": {
+        "CharacterAutoLoads": false
       }
     }
   }

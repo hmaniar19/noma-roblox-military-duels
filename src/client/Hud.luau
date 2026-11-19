@@ -1,0 +1,347 @@
+--!strict
+-- Scoreboard, round timer, health, ammo, crosshair, hit markers, the HEADSHOT flash, damage
+-- vignette and the big round/match banners. Everything here is read from server state.
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Weapon = require(script.Parent.Weapon)
+
+local player = Players.LocalPlayer :: Player
+local remotes = ReplicatedStorage:WaitForChild("Remotes")
+local state = ReplicatedStorage:WaitForChild("GameState")
+local HitConfirm = remotes:WaitForChild("HitConfirm") :: RemoteEvent
+local Damaged = remotes:WaitForChild("Damaged") :: RemoteEvent
+local Banner = remotes:WaitForChild("Banner") :: RemoteEvent
+
+local FONT = Enum.Font.GothamBlack
+local NAVY = Config.Teams.Navy
+local GREY = Config.Teams.Grey
+
+game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+local gui = Instance.new("ScreenGui")
+gui.Name = "DuelHud"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local function frame(
+	size: UDim2,
+	position: UDim2,
+	anchor: Vector2,
+	color: Color3,
+	transparency: number,
+	parent: Instance?
+): Frame
+	local f = Instance.new("Frame")
+	f.Size = size
+	f.Position = position
+	f.AnchorPoint = anchor
+	f.BackgroundColor3 = color
+	f.BackgroundTransparency = transparency
+	f.BorderSizePixel = 0
+	f.Parent = parent or gui
+	return f
+end
+
+local function text(
+	parent: Instance,
+	size: UDim2,
+	position: UDim2,
+	anchor: Vector2,
+	textSize: number,
+	color: Color3?
+): TextLabel
+	local l = Instance.new("TextLabel")
+	l.Size = size
+	l.Position = position
+	l.AnchorPoint = anchor
+	l.BackgroundTransparency = 1
+	l.Font = FONT
+	l.TextSize = textSize
+	l.TextColor3 = color or Color3.new(1, 1, 1)
+	l.TextStrokeTransparency = 0.6
+	l.Text = ""
+	l.Parent = parent
+	return l
+end
+
+local function round(f: GuiObject, radius: number)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius)
+	c.Parent = f
+end
+
+-- Scoreboard: NAVY name + score | timer | score + name GREY
+local board =
+	frame(UDim2.fromOffset(560, 64), UDim2.new(0.5, 0, 0, 12), Vector2.new(0.5, 0), Color3.fromRGB(12, 16, 24), 0.25)
+round(board, 10)
+local navyBox = frame(UDim2.fromScale(0.38, 1), UDim2.fromScale(0, 0), Vector2.zero, NAVY.hud, 0.15, board)
+round(navyBox, 10)
+local greyBox = frame(UDim2.fromScale(0.38, 1), UDim2.fromScale(1, 0), Vector2.new(1, 0), GREY.hud, 0.15, board)
+round(greyBox, 10)
+local navyName = text(navyBox, UDim2.new(1, -60, 1, 0), UDim2.fromOffset(12, 0), Vector2.zero, 16)
+navyName.TextXAlignment = Enum.TextXAlignment.Left
+local navyScore = text(navyBox, UDim2.new(0, 50, 1, 0), UDim2.new(1, -8, 0, 0), Vector2.new(1, 0), 34)
+local greyName =
+	text(greyBox, UDim2.new(1, -60, 1, 0), UDim2.new(1, -12, 0, 0), Vector2.new(1, 0), 16, Color3.fromRGB(20, 26, 36))
+greyName.TextXAlignment = Enum.TextXAlignment.Right
+greyName.TextStrokeTransparency = 1
+local greyScore =
+	text(greyBox, UDim2.new(0, 50, 1, 0), UDim2.fromOffset(8, 0), Vector2.zero, 34, Color3.fromRGB(20, 26, 36))
+greyScore.TextStrokeTransparency = 1
+local timer = text(board, UDim2.fromScale(0.24, 0.62), UDim2.fromScale(0.5, 0.04), Vector2.new(0.5, 0), 28)
+local roundLabel = text(
+	board,
+	UDim2.fromScale(0.24, 0.34),
+	UDim2.fromScale(0.5, 0.62),
+	Vector2.new(0.5, 0),
+	12,
+	Color3.fromRGB(235, 190, 60)
+)
+
+-- Health (bottom left) and ammo (bottom right)
+local healthBack =
+	frame(UDim2.fromOffset(300, 30), UDim2.new(0, 24, 1, -24), Vector2.new(0, 1), Color3.fromRGB(12, 16, 24), 0.3)
+round(healthBack, 6)
+local healthFill =
+	frame(UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Vector2.zero, Color3.fromRGB(90, 200, 110), 0, healthBack)
+round(healthFill, 6)
+local healthText = text(healthBack, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Vector2.zero, 18)
+local teamLabel = text(gui, UDim2.fromOffset(300, 22), UDim2.new(0, 24, 1, -58), Vector2.new(0, 1), 16)
+teamLabel.TextXAlignment = Enum.TextXAlignment.Left
+local ammoText = text(gui, UDim2.fromOffset(240, 50), UDim2.new(1, -24, 1, -40), Vector2.new(1, 1), 40)
+ammoText.TextXAlignment = Enum.TextXAlignment.Right
+local hint = text(
+	gui,
+	UDim2.fromOffset(360, 20),
+	UDim2.new(1, -24, 1, -16),
+	Vector2.new(1, 1),
+	13,
+	Color3.fromRGB(210, 210, 210)
+)
+hint.TextXAlignment = Enum.TextXAlignment.Right
+hint.Text = "CLICK fire   RIGHT-CLICK aim   R reload"
+
+-- Crosshair, hit marker and headshot flash
+local cross = frame(UDim2.fromOffset(1, 1), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), Color3.new(), 1)
+local crossBars: { Frame } = {}
+for i = 1, 4 do
+	local bar = frame(
+		UDim2.fromOffset(if i <= 2 then 10 else 2, if i <= 2 then 2 else 10),
+		UDim2.fromScale(0.5, 0.5),
+		Vector2.new(0.5, 0.5),
+		Color3.new(1, 1, 1),
+		0.1,
+		cross
+	)
+	crossBars[i] = bar
+end
+local marker = frame(UDim2.fromOffset(28, 28), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), Color3.new(), 1)
+local markerBars: { Frame } = {}
+for i, angle in { 45, -45, 135, -135 } do
+	local rad = math.rad(angle)
+	local bar = frame(
+		UDim2.fromOffset(9, 2),
+		UDim2.new(0.5, math.cos(rad) * 9, 0.5, math.sin(rad) * 9),
+		Vector2.new(0.5, 0.5),
+		Color3.new(1, 1, 1),
+		0,
+		marker
+	)
+	bar.Rotation = angle
+	markerBars[i] = bar
+end
+marker.Visible = false
+local headshot = text(
+	gui,
+	UDim2.fromOffset(500, 60),
+	UDim2.fromScale(0.5, 0.36),
+	Vector2.new(0.5, 0.5),
+	48,
+	Color3.fromRGB(235, 40, 40)
+)
+headshot.Text = "HEADSHOT"
+headshot.Visible = false
+local vignette = frame(UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Vector2.zero, Color3.fromRGB(200, 0, 0), 1)
+local gradient = Instance.new("UIGradient")
+gradient.Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0),
+	NumberSequenceKeypoint.new(0.25, 1),
+	NumberSequenceKeypoint.new(0.75, 1),
+	NumberSequenceKeypoint.new(1, 0),
+})
+gradient.Parent = vignette
+local shield = text(
+	gui,
+	UDim2.fromOffset(300, 24),
+	UDim2.new(0.5, 0, 1, -80),
+	Vector2.new(0.5, 1),
+	18,
+	Color3.fromRGB(120, 200, 255)
+)
+shield.Text = "SPAWN SHIELD (firing drops it)"
+
+-- Big center banner
+local bannerTitle = text(gui, UDim2.fromOffset(800, 90), UDim2.fromScale(0.5, 0.28), Vector2.new(0.5, 0.5), 72)
+local bannerSub = text(gui, UDim2.fromOffset(800, 40), UDim2.fromScale(0.5, 0.36), Vector2.new(0.5, 0.5), 24)
+local status = text(gui, UDim2.fromOffset(700, 30), UDim2.fromScale(0.5, 0.6), Vector2.new(0.5, 0.5), 22)
+local bannerUntil = 0
+
+local function showBanner(title: string, sub: string, color: Color3, seconds: number)
+	bannerTitle.Text, bannerSub.Text = title, sub
+	bannerTitle.TextColor3 = color
+	bannerUntil = os.clock() + seconds
+end
+
+local function myTeam(): Config.TeamId?
+	return player:GetAttribute("Team") :: Config.TeamId?
+end
+
+local WIN = Color3.fromRGB(110, 220, 120)
+local LOSE = Color3.fromRGB(235, 70, 60)
+local GOLD = Color3.fromRGB(235, 190, 60)
+
+Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
+	local team = myTeam()
+	if kind == "RoundStart" then
+		local mySide = if team == "Navy" then data.navySide elseif data.navySide == "A" then "B" else "A"
+		local sub = if team then `You start on SIDE {mySide}` else "Watching from the gallery"
+		if data.sudden then
+			showBanner("SUDDEN DEATH", "4 - 4. Next round wins it all.", LOSE, Config.FreezeSeconds)
+		else
+			showBanner(`ROUND {data.round}`, sub, Color3.new(1, 1, 1), Config.FreezeSeconds)
+		end
+	elseif kind == "RoundEnd" then
+		if data.winner == "Draw" then
+			showBanner("DRAW", "Time ran out. No point.", GOLD, Config.RoundEndSeconds)
+		elseif team then
+			local won = data.winner == team
+			showBanner(
+				if won then "ROUND WON" else "ROUND LOST",
+				data.detail,
+				if won then WIN else LOSE,
+				Config.RoundEndSeconds
+			)
+			Weapon.sound(if won then Config.Sounds.Victory else Config.Sounds.Whoosh, gui, 0.6)
+		else
+			showBanner(
+				`{Config.Teams[data.winner :: Config.TeamId].name} WINS THE ROUND`,
+				data.detail,
+				GOLD,
+				Config.RoundEndSeconds
+			)
+		end
+	elseif kind == "MatchEnd" then
+		local score = `{data.navy} - {data.grey}`
+		local how = if data.forfeit then "Opponent left the match" else score
+		if team then
+			local won = data.winner == team
+			showBanner(if won then "VICTORY" else "DEFEAT", how, if won then GOLD else LOSE, Config.MatchEndSeconds)
+		else
+			showBanner(`{Config.Teams[data.winner :: Config.TeamId].name} WINS`, how, GOLD, Config.MatchEndSeconds)
+		end
+	end
+end)
+
+HitConfirm.OnClientEvent:Connect(function(zone: Config.Zone, killed: boolean)
+	local color = if zone == "Head" or killed then Color3.fromRGB(240, 50, 50) else Color3.new(1, 1, 1)
+	for _, bar in markerBars do
+		bar.BackgroundColor3 = color
+	end
+	marker.Visible = true
+	marker.Size = UDim2.fromOffset(36, 36)
+	TweenService:Create(marker, TweenInfo.new(0.15), { Size = UDim2.fromOffset(28, 28) }):Play()
+	task.delay(0.18, function()
+		marker.Visible = false
+	end)
+	if zone == "Head" then
+		Weapon.sound(Config.Sounds.Headshot, gui, 0.7)
+		headshot.Visible = true
+		headshot.TextTransparency = 0
+		headshot.TextSize = 60
+		TweenService:Create(headshot, TweenInfo.new(0.6), { TextTransparency = 1, TextSize = 46 }):Play()
+		task.delay(0.6, function()
+			headshot.Visible = false
+		end)
+	else
+		Weapon.sound(Config.Sounds.Hit, gui, 0.4)
+	end
+end)
+
+Damaged.OnClientEvent:Connect(function()
+	vignette.BackgroundTransparency = 0.55
+	TweenService:Create(vignette, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
+end)
+
+local function clock(seconds: number): string
+	seconds = math.max(0, math.ceil(seconds))
+	return string.format("%d:%02d", seconds // 60, seconds % 60)
+end
+
+RunService.RenderStepped:Connect(function()
+	local phase = state:GetAttribute("Phase")
+	local now = workspace:GetServerTimeNow()
+	navyName.Text = state:GetAttribute("NavyName") or "NAVY"
+	greyName.Text = state:GetAttribute("GreyName") or "GREY"
+	navyScore.Text = tostring(state:GetAttribute("NavyScore") or 0)
+	greyScore.Text = tostring(state:GetAttribute("GreyScore") or 0)
+	if phase == "Live" then
+		timer.Text = clock((state:GetAttribute("RoundEndsAt") or now) - now)
+	elseif phase == "Freeze" then
+		timer.Text = clock((state:GetAttribute("FreezeEndsAt") or now) - now)
+	else
+		timer.Text = "--:--"
+	end
+	roundLabel.Text = if state:GetAttribute("SuddenDeath")
+		then "SUDDEN DEATH"
+		else `ROUND {state:GetAttribute("Round") or 0}  ·  FIRST TO {Config.RoundsToWin}`
+
+	local team = myTeam()
+	local combat = Weapon.inCombat()
+	healthBack.Visible, ammoText.Visible, hint.Visible, cross.Visible = combat, combat, combat, combat
+	if team then
+		teamLabel.Text = `YOU: {Config.Teams[team].name}`
+		teamLabel.TextColor3 = Config.Teams[team].hud
+	elseif phase == "Waiting" then
+		teamLabel.Text = ""
+	else
+		teamLabel.Text = "SPECTATING"
+		teamLabel.TextColor3 = Color3.new(1, 1, 1)
+	end
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if combat and humanoid then
+		local h = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
+		healthFill.Size = UDim2.fromScale(h, 1)
+		healthFill.BackgroundColor3 = Color3.fromRGB(235, 70, 60):Lerp(Color3.fromRGB(90, 200, 110), h)
+		healthText.Text = tostring(math.ceil(humanoid.Health))
+		ammoText.Text = if player:GetAttribute("Reloading")
+			then "RELOADING"
+			else `{player:GetAttribute("Ammo") or 0} / {Config.AssaultRifle.magazine}`
+		local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+		local moving = root ~= nil
+			and Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude > 3
+		local w = Config.AssaultRifle
+		local gap = 6
+			+ 4 * ((if Weapon.aiming then w.spreadAim else w.spreadHip) + (if moving then w.spreadMoving else 0))
+		crossBars[1].Position = UDim2.new(0.5, -gap - 5, 0.5, 0)
+		crossBars[2].Position = UDim2.new(0.5, gap + 5, 0.5, 0)
+		crossBars[3].Position = UDim2.new(0.5, 0, 0.5, -gap - 5)
+		crossBars[4].Position = UDim2.new(0.5, 0, 0.5, gap + 5)
+	end
+	shield.Visible = combat and player:GetAttribute("Shielded") == true
+	local showing = os.clock() < bannerUntil
+	bannerTitle.Visible, bannerSub.Visible = showing, showing
+	if phase == "Waiting" then
+		status.Text = "Getting the range ready..."
+	elseif not team and phase ~= "MatchEnd" then
+		status.Text = "A duel is in progress. You're in the queue for the next match."
+	else
+		status.Text = ""
+	end
+end)
+
+return {}
