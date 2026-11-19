@@ -1,0 +1,7 @@
+{
+  "max_runs": 30,
+  "judge_runs": 3,
+  "holdout_every": 5,
+  "warning_penalty": 2,
+  "max_src_lines": {"1": 2500, "2": 4000, "3": 5500, "4": 7000, "5": 8500, "6": 10000}
+}
