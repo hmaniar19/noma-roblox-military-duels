@@ -3,6 +3,28 @@
 A Roblox 1v1 and 2v2 military duel shooter, designed by **Noelle Moore** and dedicated to **Joanna Moore** and **Eddie Moore**.
 The full design is in `research/brief.md`. Code lives in `src/` and syncs into Roblox Studio with Rojo. Toolchain and daily loop are the same as noma-roblox: `rokit install`, `rojo serve`, and `./scripts/check.sh` prints `CHECK OK`.
 
+## Play it (phase 1)
+
+1. `rojo build default.project.json -o MilitaryDuels.rbxl`, then open the file in Roblox Studio.
+2. Press **Play**. Playing alone, you duel the Recruit Bot; with 2 players in a Studio test server, it's player vs player and any extra players watch from the glass gallery.
+3. Controls: **click** to fire, **right-click** to aim (tighter spread, slower walk), **R** to reload. The ladders on the central tower and the ramps inside the two offices lead up high.
+
+Rules: first to 5 round wins. Each round lasts 2:00, and a timeout is a draw with no point. Teams swap sides every round. You get a 3-second spawn shield, which drops the moment you fire. Damage multipliers: head ×3, body ×1, legs ×0.5.
+
+**Anti-cheat:** the place runs with Roblox **Server Authority** (`Workspace.AuthorityMode = Server` in `default.project.json`). The server simulates all movement, so speed, fly and teleport hacks don't move your character. The server script refuses to start without it. Every shot is validated and cast on the server:
+- ammo and fire rate
+- shot origin
+- aim direction vs body facing and reported look
+- walls
+- lag-compensated hitboxes
+
+Rejected actions add to the `CheatFlags` player attribute; phase 6 adds the penalties.
+
+**Phase 1 status:**
+- Built, and verified in Studio Play: full matches against the bot, scoring, side swaps, reloads, rematches, and forged shots rejected. Timeout draws are implemented but haven't been seen in a test yet.
+- The judge scores 59–62. Remaining judge concerns are mostly limits of the platform; for example, camera pitch can't be verified by the server.
+- Noelle's playtest is the real gate before phase 2.
+
 ## Build plan: 6 phases, not one shot
 
 Each phase is a playable game on its own. The autoresearch loop builds one phase at a time against a locked scope, and Noelle playtests it before the next phase is unlocked.

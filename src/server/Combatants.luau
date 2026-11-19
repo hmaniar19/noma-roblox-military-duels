@@ -24,9 +24,7 @@ export type Combatant = {
 	historyT: { number },
 	historyCF: { CFrame },
 	looks: { { t: number, dir: Vector3 } },
-	lastValid: CFrame,
 	lastGrounded: CFrame,
-	airTime: number,
 	lastCheck: number,
 }
 
@@ -54,9 +52,7 @@ function Combatants.new(name: string, player: Player?, team: Config.TeamId, mode
 		historyT = {},
 		historyCF = {},
 		looks = {},
-		lastValid = spawn,
 		lastGrounded = spawn,
-		airTime = 0,
 		lastCheck = os.clock(),
 	}
 	table.insert(list, c)
@@ -104,9 +100,7 @@ end
 function Combatants.teleport(c: Combatant, cf: CFrame)
 	c.model:PivotTo(cf)
 	c.root.AssemblyLinearVelocity = Vector3.zero
-	c.lastValid = cf
 	c.lastGrounded = cf
-	c.airTime = 0
 	c.lastCheck = os.clock()
 	table.clear(c.historyT)
 	table.clear(c.historyCF)

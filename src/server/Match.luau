@@ -33,6 +33,7 @@ bots.Parent = workspace
 local queue: { Player } = {}
 local roster: { Entry } = {}
 local forfeit: TeamId? = nil
+local decided = false
 local lastElimination = ""
 
 local function other(team: TeamId): TeamId
@@ -66,19 +67,9 @@ local function toGallery(player: Player, gallery: CFrame)
 	end
 	player:LoadCharacterAsync()
 	local character = player.Character
-	if character then
+	-- Skip the move if they were picked for a duel while this load was running.
+	if character and player:GetAttribute("Team") == nil then
 		character:PivotTo(gallery * CFrame.new(random:NextNumber(-12, 12), 0, 0))
-	end
-end
-
-Combat.isLive = function()
-	return state:GetAttribute("Phase") == "Live"
-end
-
-Combat.onElimination = function(victim, attacker, zone)
-	if attacker and attacker ~= victim then
-		lastElimination = `{attacker.name} eliminated {victim.name}`
-			.. (if zone == "Head" then " with a HEADSHOT" else "")
 	end
 end
 
@@ -92,14 +83,40 @@ local function living(team: TeamId): { Combatant }
 	return out
 end
 
+-- Combat stops the instant a side is wiped out, so the survivor can't keep shooting into the end.
+local function latchIfWiped()
+	if Combat.isLive() and (#living("Navy") == 0 or #living("Grey") == 0) then
+		setPhase("RoundEnd")
+	end
+end
+
+-- Live only until the deadline the HUD shows, not until the round loop next wakes up.
+Combat.isLive = function()
+	return state:GetAttribute("Phase") == "Live"
+		and workspace:GetServerTimeNow() < (state:GetAttribute("RoundEndsAt") or 0)
+end
+
+Combat.onElimination = function(victim, attacker, zone)
+	if attacker and attacker ~= victim then
+		lastElimination = `{attacker.name} eliminated {victim.name}`
+			.. (if zone == "Head" then " with a HEADSHOT" else "")
+	end
+	latchIfWiped()
+end
+
 local function spawnEntry(entry: Entry, cf: CFrame, info: Map.MapInfo): Combatant?
 	local model: Model?
-	if entry.player then
-		entry.player.CameraMode = Enum.CameraMode.LockFirstPerson
-		entry.player:SetAttribute("Team", entry.team)
-		model = Rig.spawnPlayer(entry.player, entry.team, cf)
-	else
-		model = Rig.spawnBot(entry.team, entry.name, cf, bots)
+	local ok, err = pcall(function()
+		if entry.player then
+			entry.player.CameraMode = Enum.CameraMode.LockFirstPerson
+			entry.player:SetAttribute("Team", entry.team)
+			model = Rig.spawnPlayer(entry.player, entry.team, cf)
+		else
+			model = Rig.spawnBot(entry.team, entry.name, cf, bots)
+		end
+	end)
+	if not ok then
+		warn(`[Match] could not spawn {entry.name}: {err}`)
 	end
 	if not model then
 		return nil
@@ -111,6 +128,7 @@ local function spawnEntry(entry: Entry, cf: CFrame, info: Map.MapInfo): Combatan
 			c.alive = false
 			lastElimination = `{c.name} was eliminated`
 		end
+		latchIfWiped()
 	end)
 	if not entry.player then
 		task.spawn(Bot.run, c, info.waypoints, function()
@@ -140,6 +158,9 @@ local function playRound(round: number, info: Map.MapInfo, scores: Scores): Resu
 		local c = spawnEntry(entry, cf, info)
 		if c then
 			table.insert(spawned, c)
+		elseif not forfeit then
+			-- A side that can't field anyone loses the match rather than leaving a one-sided round.
+			forfeit = entry.team
 		end
 	end
 	state:SetAttribute("FreezeEndsAt", workspace:GetServerTimeNow() + Config.FreezeSeconds)
@@ -168,15 +189,18 @@ local function playRound(round: number, info: Map.MapInfo, scores: Scores): Resu
 	setPhase("Live")
 
 	local deadline = os.clock() + Config.RoundSeconds
-	while os.clock() < deadline and not forfeit do
-		if #living("Navy") == 0 or #living("Grey") == 0 then
-			break
-		end
+	while os.clock() < deadline and not forfeit and state:GetAttribute("Phase") == "Live" do
 		task.wait(0.1)
 	end
+	-- A wipe latches RoundEnd itself; reaching here still Live means time ran out: a draw, even if
+	-- someone dies in the instant before this line runs.
+	local timedOut = state:GetAttribute("Phase") == "Live"
 	setPhase("RoundEnd")
 	if forfeit then
 		return nil
+	end
+	if timedOut then
+		return "Draw"
 	end
 	local navyUp, greyUp = #living("Navy") > 0, #living("Grey") > 0
 	if navyUp and not greyUp then
@@ -190,6 +214,7 @@ end
 local function playMatch(info: Map.MapInfo)
 	local scores: Scores = { Navy = 0, Grey = 0 }
 	forfeit = nil
+	decided = false
 	state:SetAttribute("NavyScore", 0)
 	state:SetAttribute("GreyScore", 0)
 	state:SetAttribute("NavyName", roster[1].name)
@@ -210,21 +235,22 @@ local function playMatch(info: Map.MapInfo)
 		end
 		state:SetAttribute("NavyScore", scores.Navy)
 		state:SetAttribute("GreyScore", scores.Grey)
+		-- The fifth point locks the result; leaving during the banners can't flip it.
+		decided = scores.Navy >= Config.RoundsToWin or scores.Grey >= Config.RoundsToWin
 		banner("RoundEnd", { winner = result, detail = if result == "Draw" then "Time ran out" else lastElimination })
 		task.wait(Config.RoundEndSeconds)
 	end
 
-	local winner: TeamId = if forfeit
-		then other(forfeit)
-		elseif scores.Navy >= Config.RoundsToWin then "Navy"
-		else "Grey"
+	local winner: TeamId = if decided
+		then (if scores.Navy >= Config.RoundsToWin then "Navy" else "Grey")
+		else other(forfeit or "Navy")
 	setPhase("MatchEnd")
 	state:SetAttribute("Winner", winner)
 	banner("MatchEnd", {
 		winner = winner,
 		navy = scores.Navy,
 		grey = scores.Grey,
-		forfeit = forfeit ~= nil,
+		forfeit = not decided,
 	})
 	task.wait(Config.MatchEndSeconds)
 	Combatants.clear()
@@ -275,7 +301,7 @@ function Match.run(info: Map.MapInfo)
 			table.remove(queue, i)
 		end
 		local entry = inRoster(player)
-		if entry and state:GetAttribute("Phase") ~= "MatchEnd" then
+		if entry and not decided and state:GetAttribute("Phase") ~= "MatchEnd" then
 			forfeit = entry.team
 		end
 	end)

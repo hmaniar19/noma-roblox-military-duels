@@ -12,7 +12,6 @@ export type MapInfo = {
 	boundsMax: Vector3,
 	waypoints: { Vector3 },
 	gallery: CFrame,
-	geometry: Folder,
 }
 
 local HALF_X, HALF_Z = 125, 85
@@ -133,11 +132,13 @@ local function office(cf: CFrame)
 		wall(side, W - 1, H, { { -2, 2, 3.5, 6.5 } })
 		wall(side * CFrame.new(0, H, 0), W - 1, H, { { -2, 2, 3.5, 6.5 } })
 	end
-	-- Second floor with a stairwell opening along the -x end, ramp underneath it.
+	-- Second floor with a stairwell along the -x end: a ramp rises toward -z onto a landing that is
+	-- flush with the floor, so the route upstairs is continuous.
 	part(Vector3.new(L - 7, 1, W - 1), cf * CFrame.new(3.5, H + 0.5, 0), CONCRETE)
+	part(Vector3.new(7, 1, 3), cf * CFrame.new(-L / 2 + 3.5, H + 0.5, -W / 2 + 2), CONCRETE)
 	part(
-		Vector3.new(6, H, 14),
-		cf * CFrame.new(-L / 2 + 3.5, H / 2, -0.5) * CFrame.Angles(0, math.pi, 0),
+		Vector3.new(6, H + 1, 11),
+		cf * CFrame.new(-L / 2 + 3.5, (H + 1) / 2, 1) * CFrame.Angles(0, math.pi, 0),
 		CONCRETE,
 		nil,
 		nil,
@@ -154,10 +155,16 @@ local function tower(cf: CFrame)
 		end
 	end
 	part(Vector3.new(12, 1, 12), cf * CFrame.new(0, h + 0.5, 0), OLIVE, Enum.Material.DiamondPlate)
-	for _, s in { { 0, 5.75, 12, 0.5 }, { 0, -5.75, 12, 0.5 }, { 5.75, 0, 0.5, 12 }, { -5.75, 0, 0.5, 12 } } do
+	-- Railings: full on the z sides, split on the x sides so each ladder arrives through a 3-stud gap.
+	local rails = { { 0, 5.75, 12, 0.5 }, { 0, -5.75, 12, 0.5 } }
+	for _, x in { 5.75, -5.75 } do
+		table.insert(rails, { x, 3.75, 0.5, 4.5 })
+		table.insert(rails, { x, -3.75, 0.5, 4.5 })
+	end
+	for _, s in rails do
 		part(Vector3.new(s[3], 2.5, s[4]), cf * CFrame.new(s[1], h + 2.25, s[2]), OLIVE, Enum.Material.Metal)
 	end
-	-- Ladders facing both spawns; the railing has a gap where each ladder arrives.
+	-- Ladders facing both spawns.
 	for _, x in { -6.75, 6.75 } do
 		part(Vector3.new(2, h + 1, 2), cf * CFrame.new(x, (h + 1) / 2, 0), OLIVE, Enum.Material.Metal, nil, "Truss")
 	end
@@ -325,7 +332,6 @@ function Map.build(): MapInfo
 		boundsMax = Vector3.new(HALF_X - 1, 60, HALF_Z - 1),
 		waypoints = waypoints,
 		gallery = gallery * CFrame.new(0, 4, 0),
-		geometry = geometry,
 	}
 end
 

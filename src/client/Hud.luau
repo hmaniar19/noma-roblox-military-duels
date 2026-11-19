@@ -210,7 +210,7 @@ Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 		local mySide = if team == "Navy" then data.navySide elseif data.navySide == "A" then "B" else "A"
 		local sub = if team then `You start on SIDE {mySide}` else "Watching from the gallery"
 		if data.sudden then
-			showBanner("SUDDEN DEATH", "4 - 4. Next round wins it all.", LOSE, Config.FreezeSeconds)
+			showBanner("SUDDEN DEATH", "4 - 4. Win this round to take the match.", LOSE, Config.FreezeSeconds)
 		else
 			showBanner(`ROUND {data.round}`, sub, Color3.new(1, 1, 1), Config.FreezeSeconds)
 		end
@@ -246,7 +246,10 @@ Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 	end
 end)
 
+local hitSerial = 0
 HitConfirm.OnClientEvent:Connect(function(zone: Config.Zone, killed: boolean)
+	hitSerial += 1
+	local serial = hitSerial
 	local color = if zone == "Head" or killed then Color3.fromRGB(240, 50, 50) else Color3.new(1, 1, 1)
 	for _, bar in markerBars do
 		bar.BackgroundColor3 = color
@@ -254,8 +257,9 @@ HitConfirm.OnClientEvent:Connect(function(zone: Config.Zone, killed: boolean)
 	marker.Visible = true
 	marker.Size = UDim2.fromOffset(36, 36)
 	TweenService:Create(marker, TweenInfo.new(0.15), { Size = UDim2.fromOffset(28, 28) }):Play()
+	-- Only the newest hit may hide the marker or flash, so rapid hits don't cut each other short.
 	task.delay(0.18, function()
-		marker.Visible = false
+		marker.Visible = marker.Visible and serial ~= hitSerial
 	end)
 	if zone == "Head" then
 		Weapon.sound(Config.Sounds.Headshot, gui, 0.7)
@@ -264,7 +268,7 @@ HitConfirm.OnClientEvent:Connect(function(zone: Config.Zone, killed: boolean)
 		headshot.TextSize = 60
 		TweenService:Create(headshot, TweenInfo.new(0.6), { TextTransparency = 1, TextSize = 46 }):Play()
 		task.delay(0.6, function()
-			headshot.Visible = false
+			headshot.Visible = headshot.Visible and serial ~= hitSerial
 		end)
 	else
 		Weapon.sound(Config.Sounds.Hit, gui, 0.4)

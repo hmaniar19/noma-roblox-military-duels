@@ -34,7 +34,6 @@ local function rayBox(origin: Vector3, dir: Vector3, maxDist: number, box: CFram
 	end
 	return tMin
 end
-Hitbox.rayBox = rayBox
 
 -- Nearest zone hit by the ray on a combatant whose HumanoidRootPart is at `root`.
 function Hitbox.cast(origin: Vector3, dir: Vector3, maxDist: number, root: CFrame): (Config.Zone?, number?)

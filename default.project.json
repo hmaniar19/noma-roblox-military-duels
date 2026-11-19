@@ -30,7 +30,13 @@
     },
     "Workspace": {
       "$properties": {
-        "FilteringEnabled": true
+        "FilteringEnabled": true,
+        "AuthorityMode": "Server",
+        "NextGenerationReplication": "Enabled",
+        "PlayerScriptsUseInputActionSystem": "Enabled",
+        "SignalBehavior": "Deferred",
+        "UseFixedSimulation": "Enabled",
+        "StreamingEnabled": true
       }
     },
     "Lighting": {

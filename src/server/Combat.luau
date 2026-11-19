@@ -99,16 +99,14 @@ function Combat.damage(target: Combatant, amount: number, attacker: Combatant, z
 end
 
 -- Validates a shot claim from a player. Returns the reason it was rejected, or nil.
+-- Call after AntiCheat.validate so the root (and so the head) is a position the server accepted.
 local function rejectClaim(c: Combatant, origin: Vector3, dir: Vector3): string?
 	local head = Combat.headPosition(c)
 	local player = c.player :: Player
-	local slack = AC.MaxOriginOffset
-		+ c.root.AssemblyLinearVelocity.Magnitude * math.min(player:GetNetworkPing(), AC.MaxRewind)
-	if (origin - head).Magnitude > slack then
-		return `shot origin {math.floor((origin - head).Magnitude)} studs from head`
-	end
-	if (origin - head).Magnitude > 0.1 and workspace:Raycast(head, origin - head, occlusion()) then
-		return "shot origin through a wall"
+	local slack = AC.MaxOriginOffset + Config.WalkSpeed * math.min(player:GetNetworkPing(), AC.MaxRewind)
+	local offset = (origin - head).Magnitude
+	if offset > slack then
+		return `shot origin {math.floor(offset)} studs from validated head`
 	end
 	if not AntiCheat.aimMatches(c, dir) then
 		return "shot direction does not match look direction"
@@ -116,7 +114,8 @@ local function rejectClaim(c: Combatant, origin: Vector3, dir: Vector3): string?
 	return nil
 end
 
--- One trigger pull. `origin` and `aimDir` are trusted for bots, checked for players.
+-- One trigger pull. Bots are trusted; player claims are checked. Every shot is cast from the
+-- server's validated head position; the client's origin only locates the crosshair's target.
 function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 	if not c.alive or not Combat.isLive() or c.reloading then
 		return
@@ -126,20 +125,26 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 		return
 	end
 	local now = os.clock()
-	-- Players are rate-limited by a token bucket on the remote (tolerates packet bunching);
-	-- bots fire from the server loop and must respect the interval exactly.
-	if not c.player and now - c.lastShot < WEAPON.fireInterval then
+	-- Same cadence for everyone. Players get 10% slack because their shots arrive with network jitter;
+	-- a bunched shot is dropped, not flagged (the remote's token bucket flags real spam).
+	if now - c.lastShot < WEAPON.fireInterval * (if c.player then 0.9 else 1) then
 		return
 	end
 	if c.player then
+		AntiCheat.validate(c)
 		local reason = rejectClaim(c, origin, aimDir)
 		if reason then
 			AntiCheat.flag(c, reason)
 			return
 		end
-	else
-		origin = Combat.headPosition(c)
+		-- Aim at what's under the crosshair, then shoot it from the server's eye so the small
+		-- camera/eye parallax can't send a clear-looking shot into a wall edge.
+		local sight = workspace:Raycast(origin, aimDir * WEAPON.range, occlusion())
+		local aimPoint = if sight then sight.Position else origin + aimDir * WEAPON.range
+		local fromEye = aimPoint - Combat.headPosition(c)
+		aimDir = if fromEye.Magnitude > 0.5 then fromEye else aimDir
 	end
+	origin = Combat.headPosition(c)
 
 	c.lastShot = now
 	c.ammo -= 1
@@ -156,7 +161,7 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 
 	local wallHit = workspace:Raycast(origin, dir * WEAPON.range, occlusion())
 	local maxDist = if wallHit then wallHit.Distance else WEAPON.range
-	local rewind = if c.player then math.clamp(c.player:GetNetworkPing() + 0.1, 0, AC.MaxRewind) else 0
+	local rewind = if c.player then math.clamp(c.player:GetNetworkPing() + 0.05, 0, AC.MaxRewind) else 0
 
 	local victim: Combatant? = nil
 	local victimZone: Config.Zone? = nil
@@ -191,7 +196,8 @@ function Combat.bind()
 			AntiCheat.flag(c, "malformed Fire payload")
 			return
 		end
-		if not Net.allow(player, "Fire", AC.FireRateSlack / WEAPON.fireInterval, 3) then
+		-- Sustained rate is capped at the weapon's; the 2-shot burst only absorbs packet bunching.
+		if not Net.allow(player, "Fire", AC.FireRateSlack / WEAPON.fireInterval, 2) then
 			AntiCheat.flag(c, "Fire remote spam")
 			return
 		end
@@ -205,7 +211,11 @@ function Combat.bind()
 	end)
 	Net.Aim.OnServerEvent:Connect(function(player, aiming)
 		local c = Combatants.byPlayer(player)
-		if not c or typeof(aiming) ~= "boolean" or not Net.allow(player, "Aim", 10, 5) then
+		if not c or not Net.allow(player, "Aim", 10, 5) then
+			return
+		end
+		if typeof(aiming) ~= "boolean" then
+			AntiCheat.flag(c, "malformed Aim payload")
 			return
 		end
 		c.aiming = aiming
@@ -215,9 +225,14 @@ function Combat.bind()
 	end)
 	Net.Look.OnServerEvent:Connect(function(player, dir)
 		local c = Combatants.byPlayer(player)
-		if c and Net.isDirection(dir) and Net.allow(player, "Look", AC.LookRate, 5) then
-			AntiCheat.recordLook(c, dir)
+		if not c or not Net.allow(player, "Look", AC.LookRate, 5) then
+			return
 		end
+		if not Net.isDirection(dir) then
+			AntiCheat.flag(c, "malformed Look payload")
+			return
+		end
+		AntiCheat.recordLook(c, dir)
 	end)
 end
 

@@ -23,7 +23,7 @@ local Banner = remotes:WaitForChild("Banner") :: RemoteEvent
 local WEAPON = Config.AssaultRifle
 local HIP = CFrame.new(0.5, -0.5, -1.1)
 local ADS = CFrame.new(0, -0.42, -0.95)
-local LOOK_INTERVAL = 1 / (Config.AntiCheat.LookRate * 0.8)
+local LOOK_INTERVAL = 2 / Config.AntiCheat.LookRate
 
 local Weapon = {}
 Weapon.aiming = false

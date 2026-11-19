@@ -60,7 +60,7 @@ end
 local function visiblePoint(c: Combatant, enemy: Combatant): Vector3?
 	local eye = Combat.headPosition(c)
 	local params = Combat.occlusion()
-	for _, offset in { Config.Hitboxes[1].offset, BODY_OFFSET } do
+	for _, offset in { BODY_OFFSET, Config.Hitboxes[1].offset } do
 		local point = (enemy.root.CFrame * CFrame.new(offset)).Position
 		if not workspace:Raycast(eye, point - eye, params) then
 			return point
@@ -79,6 +79,8 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 	local path: { PathWaypoint } = {}
 	local pathIndex, nextPath = 1, 0
 	local lastPos, stuckSince = root.Position, os.clock()
+	local stuck, wasRetreating = false, false
+	local woundedUntil: number? = nil -- one 4-second fall-back per life when health first drops low
 
 	while c.alive and root.Parent do
 		local now = os.clock()
@@ -103,7 +105,14 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 		end
 
 		local spot = visiblePoint(c, target)
-		if spot then
+		if not woundedUntil and humanoid.Health < B.RetreatHealth then
+			woundedUntil = now + 4
+		end
+		local retreating = c.reloading or (woundedUntil ~= nil and now < woundedUntil)
+		if retreating ~= wasRetreating then
+			wasRetreating, nextPath = retreating, 0
+		end
+		if spot and not retreating then
 			-- Engage: face the enemy, strafe, shoot in bursts after a human-like reaction delay.
 			seenSince = seenSince or now
 			humanoid.AutoRotate = false
@@ -113,8 +122,14 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 				strafe = if rng:NextNumber() < 0.5 then -1 else 1
 				strafeUntil = now + rng:NextNumber(0.6, 1.4)
 			end
-			humanoid:Move(root.CFrame.RightVector * strafe)
+			-- Out past effective range, close the distance instead of trading inaccurate shots.
+			if best > 90 then
+				humanoid:MoveTo(target.root.Position)
+			else
+				humanoid:Move(root.CFrame.RightVector * strafe)
+			end
 			c.aiming = best > 60
+			humanoid.WalkSpeed = if c.aiming then Config.AimWalkSpeed else Config.WalkSpeed
 			if now - (seenSince :: number) >= B.ReactionTime and now >= nextShot then
 				local aimAt = if rng:NextNumber() < B.HeadshotChance
 					then (target.root.CFrame * CFrame.new(Config.Hitboxes[1].offset)).Position
@@ -130,29 +145,36 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 				end
 			end
 		else
-			-- Hunt: path toward the cover point nearest the enemy.
+			-- Hunt toward the cover point nearest the enemy, or, while reloading or hurt, fall back to
+			-- the nearest cover point the enemy can't see.
 			seenSince = nil
 			humanoid.AutoRotate = true
 			c.aiming = false
-			if now >= nextPath or pathIndex > #path then
+			humanoid.WalkSpeed = Config.WalkSpeed
+			if now >= nextPath then
 				nextPath = now + 1.5
-				local goal = waypoints[1]
-				local goalDist = math.huge
-				for _, w in waypoints do
-					local d = (w - target.root.Position).Magnitude
-					if d < goalDist then
-						goal, goalDist = w, d
+				local goal, goalDist = waypoints[rng:NextInteger(1, #waypoints)], math.huge
+				if not stuck then
+					local enemyEye = Combat.headPosition(target)
+					for _, w in waypoints do
+						local hidden = retreating
+							and workspace:Raycast(enemyEye, w + Vector3.new(0, 2, 0) - enemyEye, Combat.occlusion())
+						local d = if retreating
+							then (w - root.Position).Magnitude
+							else (w - target.root.Position).Magnitude
+						if (hidden or not retreating) and d < goalDist then
+							goal, goalDist = w, d
+						end
+					end
+					if not retreating and (goal - root.Position).Magnitude < 8 then
+						goal = target.root.Position
 					end
 				end
-				if (goal - root.Position).Magnitude < 8 then
-					goal = target.root.Position
-				end
+				stuck = false
 				local p = PathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5.5, AgentCanJump = true })
 				local ok = pcall(p.ComputeAsync, p, root.Position, goal)
-				if ok and p.Status == Enum.PathStatus.Success then
-					path, pathIndex = p:GetWaypoints(), 2
-				else
-					path, pathIndex = {}, 1
+				path, pathIndex = if ok and p.Status == Enum.PathStatus.Success then p:GetWaypoints() else {}, 2
+				if #path == 0 then
 					humanoid:MoveTo(goal)
 				end
 			end
@@ -169,9 +191,9 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 			if (root.Position - lastPos).Magnitude > 1.5 then
 				lastPos, stuckSince = root.Position, now
 			elseif now - stuckSince > 1.5 then
+				-- Blocked: jump, and route to a random cover point instead of the same goal.
 				humanoid.Jump = true
-				nextPath = 0
-				stuckSince = now
+				stuck, nextPath, stuckSince = true, 0, now
 			end
 		end
 		task.wait(B.Think)

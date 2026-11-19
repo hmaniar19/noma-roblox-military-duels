@@ -147,8 +147,6 @@ function Rig.spawnBot(team: Config.TeamId, name: string, cf: CFrame, parent: Ins
 	model:PivotTo(cf)
 	model.Parent = parent
 	Rig.outfit(model, team)
-	local root = model:FindFirstChild("HumanoidRootPart") :: BasePart
-	root:SetNetworkOwner(nil)
 	return model
 end
 

@@ -83,13 +83,11 @@ local Config = {
 		MaxOriginOffset = 5, -- studs between claimed muzzle origin and the server's head position
 		MaxAimAngle = 30, -- degrees between shot direction and recent reported look direction
 		LookWindow = 0.4, -- seconds of look history a shot may match
-		LookRate = 20, -- max look updates per second
-		FireRateSlack = 1.15, -- allowed sustained shots/s = this / fireInterval (burst of 3 for jitter)
+		LookRate = 30, -- max look updates per second (client sends about half that)
+		FireRateSlack = 1.0, -- allowed sustained shots/s = this / fireInterval
 		MaxRewind = 0.35, -- seconds of lag compensation
-		SpeedSlack = 1.6, -- multiplier on allowed horizontal speed
-		SpeedGrace = 4, -- studs of free movement per check
+		MaxYawAngle = 60, -- degrees between shot yaw and the server-simulated body facing (fast flicks lag it)
 		CheckInterval = 0.25,
-		MaxAirSeconds = 2.5, -- rising/hovering longer than this is flying
 	},
 
 	Bot = {
@@ -97,6 +95,7 @@ local Config = {
 		ReactionTime = 0.45,
 		AimErrorDegrees = 3.2, -- grows with distance
 		HeadshotChance = 0.18,
+		RetreatHealth = 35, -- below this (or while reloading) the bot falls back to hidden cover
 		BurstShots = 5,
 		BurstPause = 0.35,
 		Think = 0.1,
