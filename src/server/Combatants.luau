@@ -1,7 +1,7 @@
 --!strict
 -- Registry of everyone in the current duel (players and bots), plus the server-side state the
--- client is never trusted with: ammo, reload, shield, position history for lag compensation,
--- recent look directions, and the last position the movement check accepted.
+-- client is never trusted with: weapons and ammo, reload, gadget, shield, position history for lag
+-- compensation, and recent look directions.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
@@ -15,7 +15,12 @@ export type Combatant = {
 	humanoid: Humanoid,
 	root: BasePart,
 	alive: boolean,
-	ammo: number,
+	weapons: { Config.WeaponId }, -- slot order
+	equipped: number,
+	ammo: { [Config.WeaponId]: number },
+	gadget: Config.GadgetId?,
+	gadgetLeft: number,
+	healingUntil: number, -- med kit channel end, 0 when not healing
 	reloadToken: number,
 	reloading: boolean,
 	lastShot: number,
@@ -32,6 +37,8 @@ local HISTORY_SECONDS = 1
 
 local Combatants = {}
 
+local SYNCED = { "Weapon", "Slots", "Ammo", "Reloading", "Gadget", "GadgetLeft", "Healing", "Shielded" }
+
 local list: { Combatant } = {}
 
 function Combatants.new(name: string, player: Player?, team: Config.TeamId, model: Model, spawn: CFrame): Combatant
@@ -43,7 +50,12 @@ function Combatants.new(name: string, player: Player?, team: Config.TeamId, mode
 		humanoid = model:FindFirstChildOfClass("Humanoid") :: Humanoid,
 		root = model:FindFirstChild("HumanoidRootPart") :: BasePart,
 		alive = true,
-		ammo = Config.AssaultRifle.magazine,
+		weapons = {},
+		equipped = 1,
+		ammo = {},
+		gadget = nil,
+		gadgetLeft = 0,
+		healingUntil = 0,
 		reloadToken = 0,
 		reloading = false,
 		lastShot = 0,
@@ -55,9 +67,13 @@ function Combatants.new(name: string, player: Player?, team: Config.TeamId, mode
 		lastGrounded = spawn,
 		lastCheck = os.clock(),
 	}
+	model:SetAttribute("Team", team)
 	table.insert(list, c)
-	Combatants.sync(c)
 	return c
+end
+
+function Combatants.weapon(c: Combatant): Config.WeaponId?
+	return c.weapons[c.equipped]
 end
 
 function Combatants.all(): { Combatant }
@@ -69,9 +85,9 @@ function Combatants.clear()
 		c.alive = false
 		c.reloadToken += 1
 		if c.player then
-			c.player:SetAttribute("Ammo", nil)
-			c.player:SetAttribute("Reloading", nil)
-			c.player:SetAttribute("Shielded", nil)
+			for _, key in SYNCED do
+				c.player:SetAttribute(key, nil)
+			end
 		end
 	end
 	table.clear(list)
@@ -90,8 +106,14 @@ end
 function Combatants.sync(c: Combatant)
 	local player = c.player
 	if player then
-		player:SetAttribute("Ammo", c.ammo)
+		local id: Config.WeaponId? = c.weapons[c.equipped]
+		player:SetAttribute("Weapon", id)
+		player:SetAttribute("Slots", table.concat(c.weapons :: { any }, ","))
+		player:SetAttribute("Ammo", if id then c.ammo[id] else 0)
 		player:SetAttribute("Reloading", c.reloading)
+		player:SetAttribute("Gadget", c.gadget)
+		player:SetAttribute("GadgetLeft", c.gadgetLeft)
+		player:SetAttribute("Healing", c.healingUntil > 0)
 		player:SetAttribute("Shielded", os.clock() < c.shieldUntil)
 	end
 end

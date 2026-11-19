@@ -1,12 +1,14 @@
 --!strict
--- A server-controlled duelist that fills an empty slot. It plays by the same rules as players:
--- it shoots through Combat.fire, so walls, ammo, reloads, spread and hitboxes all apply.
+-- A server-controlled fighter that fills an empty slot. It plays by the same rules as players: it
+-- shoots through Combat.fire (walls, ammo, cadence, spread and hitboxes all apply), can't see through
+-- smoke, closes to its weapon's effective range, and patches up with a med kit in cover.
 local PathfindingService = game:GetService("PathfindingService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Combat = require(script.Parent.Combat)
 local Combatants = require(script.Parent.Combatants)
 local Config = require(ReplicatedStorage.Shared.Config)
+local Gadgets = require(script.Parent.Gadgets)
 local Hitbox = require(ReplicatedStorage.Shared.Hitbox)
 
 type Combatant = Combatants.Combatant
@@ -62,7 +64,7 @@ local function visiblePoint(c: Combatant, enemy: Combatant): Vector3?
 	local params = Combat.occlusion()
 	for _, offset in { BODY_OFFSET, Config.Hitboxes[1].offset } do
 		local point = (enemy.root.CFrame * CFrame.new(offset)).Position
-		if not workspace:Raycast(eye, point - eye, params) then
+		if not workspace:Raycast(eye, point - eye, params) and not Gadgets.smokeBlocks(eye, point) then
 			return point
 		end
 	end
@@ -80,6 +82,7 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 	local pathIndex, nextPath = 1, 0
 	local lastPos, stuckSince = root.Position, os.clock()
 	local stuck, wasRetreating = false, false
+	local pathOnlyUntil = 0 -- after snagging while closing in, follow a path for a moment
 	local woundedUntil: number? = nil -- one 4-second fall-back per life when health first drops low
 
 	while c.alive and root.Parent do
@@ -90,12 +93,15 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 			continue
 		end
 
+		-- Nearest enemy it can see; if none are visible, the nearest one to hunt.
 		local target: Combatant? = nil
+		local spot: Vector3? = nil
 		local best = math.huge
 		for _, e in enemies() do
 			local d = (e.root.Position - root.Position).Magnitude
-			if d < best then
-				target, best = e, d
+			local seen = visiblePoint(c, e)
+			if (seen and not spot) or ((seen ~= nil) == (spot ~= nil) and d < best) then
+				target, spot, best = e, seen, d
 			end
 		end
 		if not target then
@@ -104,16 +110,21 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 			continue
 		end
 
-		local spot = visiblePoint(c, target)
+		local id = Combatants.weapon(c)
+		local w = if id then Config.Weapons[id] else nil
 		if not woundedUntil and humanoid.Health < B.RetreatHealth then
 			woundedUntil = now + 4
 		end
-		local retreating = c.reloading or (woundedUntil ~= nil and now < woundedUntil)
+		local retreating = c.reloading or c.healingUntil > 0 or (woundedUntil ~= nil and now < woundedUntil)
 		if retreating ~= wasRetreating then
 			wasRetreating, nextPath = retreating, 0
 		end
-		if spot and not retreating then
-			-- Engage: face the enemy, strafe, shoot in bursts after a human-like reaction delay.
+		if not spot and c.gadget == "Medkit" and c.gadgetLeft > 0 and humanoid.Health < B.HealBelow then
+			Gadgets.use(c, root.CFrame.LookVector)
+		end
+		if spot and w and not retreating and now >= pathOnlyUntil then
+			-- Engage: face the enemy, close to the weapon's range or strafe, and fire after a human-like
+			-- reaction delay (bursts for automatics).
 			seenSince = seenSince or now
 			humanoid.AutoRotate = false
 			local flat = Vector3.new(target.root.Position.X, root.Position.Y, target.root.Position.Z)
@@ -122,24 +133,36 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 				strafe = if rng:NextNumber() < 0.5 then -1 else 1
 				strafeUntil = now + rng:NextNumber(0.6, 1.4)
 			end
-			-- Out past effective range, close the distance instead of trading inaccurate shots.
-			if best > 90 then
+			-- Draw the sidearm when the primary can't reach, and back when it can.
+			local primary = Config.Weapons[c.weapons[1]]
+			local wantSlot = if c.weapons[2] and best > primary.botRange * 2.5 then 2 else 1
+			if c.equipped ~= wantSlot and not c.reloading then
+				Combat.equip(c, wantSlot)
+			end
+			if best > w.botRange then
 				humanoid:MoveTo(target.root.Position)
+				-- Walking straight at a visible enemy can snag on low cover: path around it instead.
+				if (root.Position - lastPos).Magnitude > 1.5 then
+					lastPos, stuckSince = root.Position, now
+				elseif now - stuckSince > 1.5 then
+					pathOnlyUntil, nextPath, stuckSince = now + 2.5, 0, now
+				end
 			else
 				humanoid:Move(root.CFrame.RightVector * strafe)
 			end
-			c.aiming = best > 60
+			c.aiming = w.kind == "gun" and (best > 60 or id == "Sniper")
 			humanoid.WalkSpeed = if c.aiming then Config.AimWalkSpeed else Config.WalkSpeed
-			if now - (seenSince :: number) >= B.ReactionTime and now >= nextShot then
+			local inReach = best <= (if w.kind == "melee" then w.range else w.botRange * 2.5)
+			if inReach and now - (seenSince :: number) >= B.ReactionTime and now >= nextShot then
 				local aimAt = if rng:NextNumber() < B.HeadshotChance
 					then (target.root.CFrame * CFrame.new(Config.Hitboxes[1].offset)).Position
 					else spot
 				local eye = Combat.headPosition(c)
-				local err = B.AimErrorDegrees * (1 + best / 120)
+				local err = B.AimErrorDegrees * (1 + best / 120) * (if id == "Sniper" then 0.3 else 1)
 				Combat.fire(c, eye, Hitbox.spread((aimAt - eye).Unit, err, rng))
 				burstLeft -= 1
-				nextShot = now + Config.AssaultRifle.fireInterval
-				if burstLeft <= 0 then
+				nextShot = now + w.fireInterval + (if w.auto then 0 else 0.2)
+				if w.auto and burstLeft <= 0 then
 					burstLeft = B.BurstShots
 					nextShot = now + B.BurstPause
 				end
@@ -156,14 +179,14 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 				local goal, goalDist = waypoints[rng:NextInteger(1, #waypoints)], math.huge
 				if not stuck then
 					local enemyEye = Combat.headPosition(target)
-					for _, w in waypoints do
+					for _, point in waypoints do
 						local hidden = retreating
-							and workspace:Raycast(enemyEye, w + Vector3.new(0, 2, 0) - enemyEye, Combat.occlusion())
+							and workspace:Raycast(enemyEye, point + Vector3.new(0, 2, 0) - enemyEye, Combat.occlusion())
 						local d = if retreating
-							then (w - root.Position).Magnitude
-							else (w - target.root.Position).Magnitude
+							then (point - root.Position).Magnitude
+							else (point - target.root.Position).Magnitude
 						if (hidden or not retreating) and d < goalDist then
-							goal, goalDist = w, d
+							goal, goalDist = point, d
 						end
 					end
 					if not retreating and (goal - root.Position).Magnitude < 8 then

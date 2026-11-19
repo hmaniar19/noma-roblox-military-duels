@@ -1,6 +1,7 @@
 --!strict
--- Trigger, aim and reload input; the first-person viewmodel; look updates for the server's aim
--- check; tracers and sounds for every shot the server confirms. The client never decides hits.
+-- Trigger, aim, reload, slot and gadget input; the first-person viewmodel for whatever is in hand;
+-- look updates for the server's aim check; tracers and sounds for every shot the server confirms;
+-- and following a teammate after you're eliminated. The client never decides hits.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -14,43 +15,37 @@ local player = Players.LocalPlayer :: Player
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local state = ReplicatedStorage:WaitForChild("GameState")
 local Fire = remotes:WaitForChild("Fire") :: RemoteEvent
+local Equip = remotes:WaitForChild("Equip") :: RemoteEvent
+local Gadget = remotes:WaitForChild("Gadget") :: RemoteEvent
 local Reload = remotes:WaitForChild("Reload") :: RemoteEvent
 local Aim = remotes:WaitForChild("Aim") :: RemoteEvent
 local Look = remotes:WaitForChild("Look") :: RemoteEvent
 local ShotFx = remotes:WaitForChild("ShotFx") :: RemoteEvent
 local Banner = remotes:WaitForChild("Banner") :: RemoteEvent
 
-local WEAPON = Config.AssaultRifle
 local HIP = CFrame.new(0.5, -0.5, -1.1)
 local ADS = CFrame.new(0, -0.42, -0.95)
 local LOOK_INTERVAL = 2 / Config.AntiCheat.LookRate
 
 local Weapon = {}
 Weapon.aiming = false
-Weapon.lastFire = 0
+Weapon.menuOpen = false -- set by Menu; keeps the cursor visible while a picker is open
 
 local firing = false
 local aimBlend = 0
 local recoil = 0
+local swing = 0
 local lastLook = 0
+local lastFire = 0
 
 local viewmodel = Instance.new("Model")
 viewmodel.Name = "Viewmodel"
-local vmHandle = Gun.build(viewmodel)
-viewmodel.PrimaryPart = vmHandle
-viewmodel:ScaleTo(0.42)
--- Cosmetic only: anchored, or gravity builds velocity between PivotTo calls until the parts are destroyed.
-for _, d in viewmodel:GetDescendants() do
-	if d:IsA("BasePart") then
-		d.Anchored = true
-	end
-end
-local muzzle = vmHandle:FindFirstChild("Muzzle") :: Attachment
+local vmId: Config.WeaponId? = nil
+local muzzle: Attachment? = nil
 local flash = Instance.new("PointLight")
 flash.Color = Color3.fromRGB(255, 200, 120)
 flash.Range = 12
 flash.Brightness = 0
-flash.Parent = muzzle
 
 local fxFolder = Instance.new("Folder")
 fxFolder.Name = "LocalFx"
@@ -73,17 +68,37 @@ local function sound(id: string, parent: Instance, volume: number)
 end
 Weapon.sound = sound
 
+function Weapon.current(): (Config.WeaponId?, Config.Weapon?)
+	local id = player:GetAttribute("Weapon") :: Config.WeaponId?
+	return id, if id then Config.Weapons[id] else nil
+end
+
 function Weapon.inCombat(): boolean
 	local character = player.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	return player:GetAttribute("Team") ~= nil and humanoid ~= nil and humanoid.Health > 0
 end
 
-local function canShoot(): boolean
-	return Weapon.inCombat()
-		and state:GetAttribute("Phase") == "Live"
-		and not player:GetAttribute("Reloading")
-		and (player:GetAttribute("Ammo") or 0) > 0
+-- Rebuilds the first-person model when the weapon in hand changes.
+local function refreshViewmodel(id: Config.WeaponId)
+	flash.Parent = nil -- the light is reused; detach it before the old model is destroyed
+	-- A fresh model each time: ScaleTo is relative to the model's current scale, so reusing one
+	-- would leave every weapon after the first at full size.
+	viewmodel:Destroy()
+	viewmodel = Instance.new("Model")
+	viewmodel.Name = "Viewmodel"
+	local handle = Gun.build(viewmodel, id)
+	viewmodel.PrimaryPart = handle
+	viewmodel:ScaleTo(0.42)
+	-- Cosmetic only: anchored, or gravity builds velocity between PivotTo calls until the parts are destroyed.
+	for _, d in viewmodel:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+		end
+	end
+	muzzle = handle:FindFirstChild("Muzzle") :: Attachment
+	flash.Parent = muzzle
+	vmId = id
 end
 
 local function setAiming(on: boolean)
@@ -94,25 +109,36 @@ local function setAiming(on: boolean)
 end
 
 local function tryFire()
+	local _, w = Weapon.current()
 	local now = os.clock()
-	if now - Weapon.lastFire < WEAPON.fireInterval then
+	if not w or now - lastFire < w.fireInterval then
 		return
 	end
-	if not canShoot() then
-		if firing and Weapon.inCombat() and (player:GetAttribute("Ammo") or 0) <= 0 then
-			sound(Config.Sounds.Empty, workspace.CurrentCamera, 0.4)
-			firing = false
-		end
+	if not w.auto then
+		firing = false -- semi-automatic: one shot per click
+	end
+	local live = Weapon.inCombat() and state:GetAttribute("Phase") == "Live"
+	if not live or player:GetAttribute("Reloading") or player:GetAttribute("Healing") then
 		return
 	end
-	Weapon.lastFire = now
+	if w.kind == "gun" and (player:GetAttribute("Ammo") or 0) <= 0 then
+		sound(Config.Sounds.Empty, workspace.CurrentCamera, 0.4)
+		firing = false
+		return
+	end
+	lastFire = now
 	local camera = workspace.CurrentCamera
 	Look:FireServer(camera.CFrame.LookVector)
 	lastLook = now
 	Fire:FireServer(camera.CFrame.Position, camera.CFrame.LookVector)
-	recoil = math.min(recoil + 0.35, 1.2)
-	flash.Brightness = 4
-	sound(Config.Sounds.Shot, camera, 0.5)
+	if w.kind == "melee" then
+		swing = 1
+		sound(Config.Sounds.Slash, camera, 0.5)
+	else
+		recoil = math.min(recoil + (if w.pellets > 1 or not w.auto then 1 else 0.35), 1.6)
+		flash.Brightness = 4
+		sound(Config.Sounds.Shot, camera, 0.5)
+	end
 end
 
 local function hideTool()
@@ -164,21 +190,40 @@ Banner.OnClientEvent:Connect(function(kind: string)
 	end
 end)
 
-ShotFx.OnClientEvent:Connect(function(shooter: Model, origin: Vector3, hitPos: Vector3, hitWall: boolean)
-	if shooter == player.Character then
-		tracer(muzzle.WorldPosition, hitPos, hitWall)
-		return
+ShotFx.OnClientEvent:Connect(
+	function(shooter: Model, origin: Vector3, hitPos: Vector3, hitWall: boolean, melee: boolean)
+		local tool = shooter and shooter:FindFirstChildOfClass("Tool")
+		local handle = tool and tool:FindFirstChild("Handle")
+		if shooter == player.Character then
+			if not melee and muzzle then
+				tracer(muzzle.WorldPosition, hitPos, hitWall)
+			end
+			return
+		end
+		if handle then
+			sound(if melee then Config.Sounds.Slash else Config.Sounds.Shot, handle, 0.8)
+		end
+		local m = handle and handle:FindFirstChild("Muzzle")
+		if not melee then
+			tracer(if m and m:IsA("Attachment") then m.WorldPosition else origin, hitPos, hitWall)
+		end
 	end
-	local from = origin
-	local tool = shooter and shooter:FindFirstChildOfClass("Tool")
-	local handle = tool and tool:FindFirstChild("Handle")
-	local m = handle and handle:FindFirstChild("Muzzle")
-	if m and m:IsA("Attachment") then
-		from = m.WorldPosition
-		sound(Config.Sounds.Shot, handle :: Instance, 0.8)
+)
+
+local function equipSlot(index: number)
+	local slots = string.split((player:GetAttribute("Slots") or "") :: string, ",")
+	if Weapon.inCombat() and slots[index] and slots[index] ~= "" then
+		firing = false
+		Equip:FireServer(index)
 	end
-	tracer(from, hitPos, hitWall)
-end)
+end
+
+local function slotIndex(): (number, number)
+	local slots = string.split((player:GetAttribute("Slots") or "") :: string, ",")
+	return table.find(slots, player:GetAttribute("Weapon") :: string) or 1, #slots
+end
+
+local KEY_SLOTS = { [Enum.KeyCode.One] = 1, [Enum.KeyCode.Two] = 2, [Enum.KeyCode.Three] = 3 }
 
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then
@@ -189,9 +234,25 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		tryFire()
 	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
 		setAiming(true)
+	elseif KEY_SLOTS[input.KeyCode] then
+		equipSlot(KEY_SLOTS[input.KeyCode])
+	elseif input.KeyCode == Enum.KeyCode.G or input.KeyCode == Enum.KeyCode.Four then
+		if Weapon.inCombat() and (player:GetAttribute("GadgetLeft") or 0) > 0 then
+			Gadget:FireServer(workspace.CurrentCamera.CFrame.LookVector)
+		end
 	elseif input.KeyCode == Enum.KeyCode.R then
-		if Weapon.inCombat() and (player:GetAttribute("Ammo") or 0) < WEAPON.magazine then
+		local id, w = Weapon.current()
+		if Weapon.inCombat() and id and w and w.kind == "gun" and (player:GetAttribute("Ammo") or 0) < w.magazine then
 			Reload:FireServer()
+		end
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input, processed)
+	if not processed and input.UserInputType == Enum.UserInputType.MouseWheel then
+		local index, count = slotIndex()
+		if count > 1 then
+			equipSlot((index - 1 + (if input.Position.Z < 0 then 1 else -1)) % count + 1)
 		end
 	end
 end)
@@ -210,18 +271,59 @@ player:GetAttributeChangedSignal("Reloading"):Connect(function()
 	end
 end)
 
+-- After you're eliminated, watch a teammate who is still fighting.
+local function followTeammate(camera: Camera)
+	local team = player:GetAttribute("Team")
+	if not team or state:GetAttribute("Phase") ~= "Live" then
+		return
+	end
+	local current = camera.CameraSubject
+	if current and current:IsA("Humanoid") and current.Health > 0 and current.Parent ~= player.Character then
+		return
+	end
+	local candidates: { Instance } = {}
+	for _, other in Players:GetPlayers() do
+		table.insert(candidates, other.Character :: any)
+	end
+	local bots = workspace:FindFirstChild("Bots")
+	for _, bot in (if bots then bots:GetChildren() else {}) :: { Instance } do
+		table.insert(candidates, bot)
+	end
+	for _, model in candidates do
+		if model:GetAttribute("Team") == team and model ~= player.Character then
+			local humanoid = model:FindFirstChildOfClass("Humanoid")
+			if humanoid and humanoid.Health > 0 then
+				camera.CameraSubject = humanoid
+				return
+			end
+		end
+	end
+end
+
+local nextFollowCheck = 0
 RunService.RenderStepped:Connect(function(dt: number)
 	local camera = workspace.CurrentCamera
-	local active = Weapon.inCombat()
-	if not active then
+	if not Weapon.inCombat() then
 		viewmodel.Parent = nil
 		firing = false
 		setAiming(false)
 		camera.FieldOfView = 70
 		UserInputService.MouseIconEnabled = true
+		if os.clock() > nextFollowCheck then
+			nextFollowCheck = os.clock() + 0.5
+			followTeammate(camera)
+		end
 		return
 	end
-	UserInputService.MouseIconEnabled = false
+	local id, w = Weapon.current()
+	if not id or not w then
+		viewmodel.Parent = nil
+		return
+	end
+	if id ~= vmId then
+		refreshViewmodel(id)
+	end
+	UserInputService.MouseIconEnabled = Weapon.menuOpen
 	hideTool()
 	if firing then
 		tryFire()
@@ -232,16 +334,19 @@ RunService.RenderStepped:Connect(function(dt: number)
 		Look:FireServer(camera.CFrame.LookVector)
 	end
 
-	aimBlend += ((if Weapon.aiming then 1 else 0) - aimBlend) * math.min(dt * 14, 1)
+	local scoped = id == "Sniper" and aimBlend > 0.9
+	aimBlend += ((if Weapon.aiming and w.kind == "gun" then 1 else 0) - aimBlend) * math.min(dt * 14, 1)
 	recoil = math.max(recoil - dt * 6, 0)
+	swing = math.max(swing - dt * 5, 0)
 	flash.Brightness = math.max(flash.Brightness - dt * 60, 0)
-	camera.FieldOfView = 70 - 20 * aimBlend
-	local reloading = player:GetAttribute("Reloading") == true
+	camera.FieldOfView = 70 - (if id == "Sniper" then 50 else 20) * aimBlend
+	local reloading = player:GetAttribute("Reloading") == true or player:GetAttribute("Healing") == true
 	local offset = HIP:Lerp(ADS, aimBlend)
 	local kick = CFrame.new(0, 0, recoil * 0.25) * CFrame.Angles(recoil * 0.08, 0, 0)
+	local stab = CFrame.new(-0.3 * swing, 0.1 * swing, -0.9 * swing) * CFrame.Angles(0, 0, -0.6 * swing)
 	local dip = if reloading then CFrame.new(0, -0.5, 0) * CFrame.Angles(-0.6, 0, 0.3) else CFrame.identity
-	viewmodel.Parent = camera
-	viewmodel:PivotTo(camera.CFrame * offset * kick * dip)
+	viewmodel.Parent = if scoped then nil else camera
+	viewmodel:PivotTo(camera.CFrame * offset * kick * stab * dip)
 end)
 
 return Weapon

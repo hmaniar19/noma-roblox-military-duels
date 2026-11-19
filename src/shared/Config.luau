@@ -2,29 +2,49 @@
 -- Every tunable in one place. Server and client both read this; only the server enforces it.
 
 export type TeamId = "Navy" | "Grey"
+export type Mode = "1v1" | "2v2"
+-- Keys of Config.Weapons / Config.Gadgets. Plain strings: the server validates every incoming id
+-- against Config.Loadout, and Luau widens literal unions as they pass through tables.
+export type WeaponId = string
+export type GadgetId = string
+export type Role = "Sniper" | "Knife"
 
 export type Weapon = {
 	name: string,
-	damage: number, -- body damage at close range
+	kind: "gun" | "melee",
+	auto: boolean, -- hold to fire; otherwise one shot per click
+	damage: number, -- body damage per bullet (or per stab) at close range
+	pellets: number, -- bullets per trigger pull
 	falloffStart: number,
 	falloffEnd: number,
 	minDamageScale: number, -- damage multiplier at and beyond falloffEnd
 	range: number,
-	fireInterval: number, -- seconds between shots
-	magazine: number,
+	fireInterval: number, -- seconds between shots (or swings)
+	magazine: number, -- 0 for melee
 	reloadTime: number,
 	spreadHip: number, -- degrees
 	spreadAim: number,
 	spreadMoving: number, -- extra degrees while moving
+	botRange: number, -- the bot closes in until it is this near
 }
 
-export type Zone = "Head" | "Body" | "Legs"
+export type Zone = string -- "Head" | "Body" | "Legs" (keys of ZoneMultiplier; produced only by Hitbox.cast)
+
+local function gun(t: { [string]: any }): Weapon
+	t.kind = t.kind or "gun"
+	t.auto = if t.auto == nil then true else t.auto
+	t.pellets = t.pellets or 1
+	t.minDamageScale = t.minDamageScale or 0.7
+	t.spreadMoving = t.spreadMoving or 1.5
+	return (t :: any) :: Weapon
+end
 
 local Config = {
 	RoundsToWin = 5,
 	SuddenDeathAt = 4,
 	RoundSeconds = 120,
-	FreezeSeconds = 3,
+	FreezeSeconds = 8, -- includes picking a loadout
+	LobbySeconds = 6, -- choose 1v1 or 2v2 before each match
 	RoundEndSeconds = 4,
 	MatchEndSeconds = 8,
 	SpawnShieldSeconds = 3,
@@ -48,20 +68,115 @@ local Config = {
 		{ zone = "Legs" :: Zone, offset = Vector3.new(0, -1.75, 0), size = Vector3.new(1.8, 2.3, 1.1) },
 	} :: { { zone: Zone, offset: Vector3, size: Vector3 } },
 
-	AssaultRifle = {
-		name = "Assault Rifle",
-		damage = 25,
-		falloffStart = 70,
-		falloffEnd = 160,
-		minDamageScale = 0.7,
-		range = 600,
-		fireInterval = 0.1,
-		magazine = 30,
-		reloadTime = 2.2,
-		spreadHip = 2.2,
-		spreadAim = 0.35,
-		spreadMoving = 1.5,
-	} :: Weapon,
+	-- One table for every weapon; the server enforces all of it.
+	Weapons = {
+		AR = gun({
+			name = "Assault Rifle",
+			damage = 25,
+			falloffStart = 70,
+			falloffEnd = 160,
+			range = 600,
+			fireInterval = 0.1,
+			magazine = 30,
+			reloadTime = 2.2,
+			spreadHip = 2.2,
+			spreadAim = 0.35,
+			botRange = 80,
+		}),
+		SMG = gun({
+			name = "SMG",
+			damage = 19,
+			falloffStart = 25,
+			falloffEnd = 70,
+			minDamageScale = 0.45,
+			range = 400,
+			fireInterval = 0.065,
+			magazine = 35,
+			reloadTime = 1.8,
+			spreadHip = 3,
+			spreadAim = 1.2,
+			spreadMoving = 0.8,
+			botRange = 35,
+		}),
+		Shotgun = gun({
+			name = "Shotgun",
+			auto = false,
+			damage = 15, -- x8 pellets: 120 up close, so a point-blank blast wins
+			pellets = 8,
+			falloffStart = 10,
+			falloffEnd = 32,
+			minDamageScale = 0.1,
+			range = 120,
+			fireInterval = 0.85,
+			magazine = 6,
+			reloadTime = 2.6,
+			spreadHip = 6,
+			spreadAim = 4.5,
+			spreadMoving = 0.5,
+			botRange = 14,
+		}),
+		Pistol = gun({
+			name = "Pistol",
+			auto = false,
+			damage = 30,
+			falloffStart = 35,
+			falloffEnd = 100,
+			range = 400,
+			fireInterval = 0.22,
+			magazine = 12,
+			reloadTime = 1.4,
+			spreadHip = 1.5,
+			spreadAim = 0.5,
+			botRange = 40,
+		}),
+		Sniper = gun({
+			name = "Sniper",
+			auto = false,
+			damage = 90, -- head x3 is a one-shot; body is two
+			falloffStart = 1000,
+			falloffEnd = 1001,
+			minDamageScale = 1,
+			range = 1000,
+			fireInterval = 1.4,
+			magazine = 5,
+			reloadTime = 3,
+			spreadHip = 7, -- aim down sights to be accurate
+			spreadAim = 0,
+			spreadMoving = 3,
+			botRange = 200,
+		}),
+		Knife = gun({
+			name = "Combat Knife",
+			kind = "melee",
+			auto = false,
+			damage = 55, -- two stabs; the zone multiplier does not apply to melee
+			falloffStart = 100,
+			falloffEnd = 101,
+			minDamageScale = 1,
+			range = 7,
+			fireInterval = 0.55,
+			magazine = 0,
+			reloadTime = 0,
+			spreadHip = 0,
+			spreadAim = 0,
+			spreadMoving = 0,
+			botRange = 4,
+		}),
+	} :: { [WeaponId]: Weapon },
+
+	-- What the pre-round screen offers. The sidearm and the knife are always carried.
+	Loadout = {
+		Primary = { "AR", "SMG", "Shotgun" } :: { WeaponId },
+		Sidearm = "Pistol" :: WeaponId,
+		Melee = "Knife" :: WeaponId,
+		Gadget = { "Frag", "Smoke", "Medkit" } :: { GadgetId },
+	},
+
+	Gadgets = {
+		Frag = { name = "Frag Grenade", fuse = 2.2, radius = 16, maxDamage = 110, minDamage = 20, throwSpeed = 75 },
+		Smoke = { name = "Smoke Grenade", fuse = 1.2, radius = 12, duration = 12, throwSpeed = 75 },
+		Medkit = { name = "Med Kit", heal = 50, channel = 3 },
+	},
 
 	Teams = {
 		Navy = {
@@ -84,7 +199,7 @@ local Config = {
 		MaxAimAngle = 30, -- degrees between shot direction and recent reported look direction
 		LookWindow = 0.4, -- seconds of look history a shot may match
 		LookRate = 30, -- max look updates per second (client sends about half that)
-		FireRateSlack = 1.0, -- allowed sustained shots/s = this / fireInterval
+		MaxShotsPerSecond = 16, -- remote-level spam cap; per-weapon cadence is enforced in Combat.fire
 		MaxRewind = 0.35, -- seconds of lag compensation
 		MaxYawAngle = 60, -- degrees between shot yaw and the server-simulated body facing (fast flicks lag it)
 		CheckInterval = 0.25,
@@ -96,6 +211,7 @@ local Config = {
 		AimErrorDegrees = 3.2, -- grows with distance
 		HeadshotChance = 0.18,
 		RetreatHealth = 35, -- below this (or while reloading) the bot falls back to hidden cover
+		HealBelow = 60, -- a bot carrying a med kit uses it in cover below this
 		BurstShots = 5,
 		BurstPause = 0.35,
 		Think = 0.1,
@@ -109,6 +225,8 @@ local Config = {
 		Empty = "rbxassetid://12221976",
 		Victory = "rbxassetid://12222253",
 		Whoosh = "rbxassetid://12222095",
+		Slash = "rbxassetid://12222095",
+		Explosion = "rbxasset://sounds/impact_explosion_03.mp3",
 	},
 }
 

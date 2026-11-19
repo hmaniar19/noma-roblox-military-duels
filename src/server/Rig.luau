@@ -5,7 +5,6 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
-local Gun = require(ReplicatedStorage.Shared.Gun)
 
 local Rig = {}
 
@@ -79,7 +78,7 @@ local function gear(model: Model, partName: string, size: Vector3, offset: CFram
 	p.Parent = model
 end
 
--- Gear, humanoid settings and the rifle. Call once the model is in the workspace.
+-- Gear and humanoid settings. Call once the model is in the workspace; Combat.arm adds weapons.
 function Rig.outfit(model: Model, team: Config.TeamId)
 	local colors = Config.Teams[team]
 	local humanoid = model:FindFirstChildOfClass("Humanoid") :: Humanoid
@@ -108,15 +107,6 @@ function Rig.outfit(model: Model, team: Config.TeamId)
 	)
 	gear(model, "LeftUpperArm", Vector3.new(1.08, 0.3, 1.08), CFrame.new(0, 0.1, 0), colors.armband)
 	gear(model, "RightUpperArm", Vector3.new(1.08, 0.3, 1.08), CFrame.new(0, 0.1, 0), colors.armband)
-
-	local tool = Instance.new("Tool")
-	tool.Name = Config.AssaultRifle.name
-	tool.CanBeDropped = false
-	tool.ManualActivationOnly = true
-	tool.Grip = CFrame.new(0, -0.1, 0.2) * CFrame.Angles(0, math.rad(180), 0)
-	Gun.build(tool)
-	tool.Parent = model
-	humanoid:EquipTool(tool)
 end
 
 -- Spawns the player's standardized, team-colored character at `cf`. Yields; returns nil if they left.

@@ -19,6 +19,10 @@ end
 
 -- client -> server
 Net.Fire = event("Fire")
+Net.Equip = event("Equip")
+Net.Gadget = event("Gadget")
+Net.Loadout = event("Loadout")
+Net.Mode = event("Mode")
 Net.Reload = event("Reload")
 Net.Aim = event("Aim")
 Net.Look = event("Look")

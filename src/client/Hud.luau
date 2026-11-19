@@ -82,13 +82,20 @@ local navyBox = frame(UDim2.fromScale(0.38, 1), UDim2.fromScale(0, 0), Vector2.z
 round(navyBox, 10)
 local greyBox = frame(UDim2.fromScale(0.38, 1), UDim2.fromScale(1, 0), Vector2.new(1, 0), GREY.hud, 0.15, board)
 round(greyBox, 10)
-local navyName = text(navyBox, UDim2.new(1, -60, 1, 0), UDim2.fromOffset(12, 0), Vector2.zero, 16)
+local navyName = text(navyBox, UDim2.new(1, -74, 1, -8), UDim2.fromOffset(12, 4), Vector2.zero, 16)
 navyName.TextXAlignment = Enum.TextXAlignment.Left
 local navyScore = text(navyBox, UDim2.new(0, 50, 1, 0), UDim2.new(1, -8, 0, 0), Vector2.new(1, 0), 34)
 local greyName =
-	text(greyBox, UDim2.new(1, -60, 1, 0), UDim2.new(1, -12, 0, 0), Vector2.new(1, 0), 16, Color3.fromRGB(20, 26, 36))
+	text(greyBox, UDim2.new(1, -74, 1, -8), UDim2.new(1, -12, 0, 4), Vector2.new(1, 0), 16, Color3.fromRGB(20, 26, 36))
 greyName.TextXAlignment = Enum.TextXAlignment.Right
 greyName.TextStrokeTransparency = 1
+-- 2v2 names ("A & B") wrap onto two lines and shrink to fit instead of running into the score.
+for _, label in { navyName, greyName } do
+	label.TextScaled, label.TextWrapped = true, true
+	local limit = Instance.new("UITextSizeConstraint")
+	limit.MaxTextSize = 16
+	limit.Parent = label
+end
 local greyScore =
 	text(greyBox, UDim2.new(0, 50, 1, 0), UDim2.fromOffset(8, 0), Vector2.zero, 34, Color3.fromRGB(20, 26, 36))
 greyScore.TextStrokeTransparency = 1
@@ -123,7 +130,9 @@ local hint = text(
 	Color3.fromRGB(210, 210, 210)
 )
 hint.TextXAlignment = Enum.TextXAlignment.Right
-hint.Text = "CLICK fire   RIGHT-CLICK aim   R reload"
+hint.Text = "CLICK fire  RIGHT-CLICK aim  R reload  1-3/WHEEL switch  G gadget"
+local slotsLabel = text(gui, UDim2.fromOffset(460, 20), UDim2.new(1, -24, 1, -92), Vector2.new(1, 1), 15)
+slotsLabel.TextXAlignment = Enum.TextXAlignment.Right
 
 -- Crosshair, hit marker and headshot flash
 local cross = frame(UDim2.fromOffset(1, 1), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), Color3.new(), 1)
@@ -216,7 +225,7 @@ Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 		end
 	elseif kind == "RoundEnd" then
 		if data.winner == "Draw" then
-			showBanner("DRAW", "Time ran out. No point.", GOLD, Config.RoundEndSeconds)
+			showBanner("DRAW", `{data.detail}. No point.`, GOLD, Config.RoundEndSeconds)
 		elseif team then
 			local won = data.winner == team
 			showBanner(
@@ -306,6 +315,7 @@ RunService.RenderStepped:Connect(function()
 	local team = myTeam()
 	local combat = Weapon.inCombat()
 	healthBack.Visible, ammoText.Visible, hint.Visible, cross.Visible = combat, combat, combat, combat
+	slotsLabel.Visible = combat
 	if team then
 		teamLabel.Text = `YOU: {Config.Teams[team].name}`
 		teamLabel.TextColor3 = Config.Teams[team].hud
@@ -322,24 +332,46 @@ RunService.RenderStepped:Connect(function()
 		healthFill.Size = UDim2.fromScale(h, 1)
 		healthFill.BackgroundColor3 = Color3.fromRGB(235, 70, 60):Lerp(Color3.fromRGB(90, 200, 110), h)
 		healthText.Text = tostring(math.ceil(humanoid.Health))
-		ammoText.Text = if player:GetAttribute("Reloading")
-			then "RELOADING"
-			else `{player:GetAttribute("Ammo") or 0} / {Config.AssaultRifle.magazine}`
+		local id, w = Weapon.current()
+		local parts = {}
+		for i, slot in string.split((player:GetAttribute("Slots") or "") :: string, ",") do
+			local entry = Config.Weapons[slot :: Config.WeaponId]
+			if entry then
+				local label = `{i} {string.upper(entry.name)}`
+				table.insert(parts, if slot == id then `[{label}]` else label)
+			end
+		end
+		local gadget = player:GetAttribute("Gadget") :: Config.GadgetId?
+		if gadget then
+			table.insert(
+				parts,
+				`G {string.upper(Config.Gadgets[gadget].name)} x{player:GetAttribute("GadgetLeft") or 0}`
+			)
+		end
+		slotsLabel.Text = table.concat(parts, "   ")
+		ammoText.Text = if not w
+			then ""
+			elseif w.kind == "melee" then "KNIFE"
+			elseif player:GetAttribute("Reloading") then "RELOADING"
+			else `{player:GetAttribute("Ammo") or 0} / {w.magazine}`
 		local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 		local moving = root ~= nil
 			and Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude > 3
-		local w = Config.AssaultRifle
-		local gap = 6
-			+ 4 * ((if Weapon.aiming then w.spreadAim else w.spreadHip) + (if moving then w.spreadMoving else 0))
+		local spread = if w
+			then (if Weapon.aiming then w.spreadAim else w.spreadHip) + (if moving then w.spreadMoving else 0)
+			else 0
+		local gap = 6 + 4 * spread
 		crossBars[1].Position = UDim2.new(0.5, -gap - 5, 0.5, 0)
 		crossBars[2].Position = UDim2.new(0.5, gap + 5, 0.5, 0)
 		crossBars[3].Position = UDim2.new(0.5, 0, 0.5, -gap - 5)
 		crossBars[4].Position = UDim2.new(0.5, 0, 0.5, gap + 5)
 	end
-	shield.Visible = combat and player:GetAttribute("Shielded") == true
+	local healing = player:GetAttribute("Healing") == true
+	shield.Text = if healing then "USING MED KIT (you can't shoot)" else "SPAWN SHIELD (firing drops it)"
+	shield.Visible = combat and (healing or player:GetAttribute("Shielded") == true)
 	local showing = os.clock() < bannerUntil
 	bannerTitle.Visible, bannerSub.Visible = showing, showing
-	if phase == "Waiting" then
+	if phase == "Waiting" or phase == "Lobby" then
 		status.Text = "Getting the range ready..."
 	elseif not team and phase ~= "MatchEnd" then
 		status.Text = "A duel is in progress. You're in the queue for the next match."

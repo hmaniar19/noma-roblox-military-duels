@@ -1,7 +1,8 @@
 --!strict
--- Match flow: 1v1, first to 5 round wins. Each round: freeze, 2:00 live, then a win, loss or draw.
--- Sides swap every round. A bot fills the second slot when only one player is here. Leaving
--- mid-match forfeits it. Players who aren't dueling watch from the spectator gallery.
+-- Match flow: a short lobby to pick 1v1 or 2v2, then first to 5 round wins. Each round: an 8-second
+-- freeze to pick a loadout, 2:00 live, then a win, loss or draw. Sides swap every round; at 4-4 each
+-- team plays Sudden Death with one sniper and one knife. Bots fill empty slots. A player who leaves
+-- is replaced by a bot; a team with no players left forfeits. Spectators watch from the gallery.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -9,13 +10,15 @@ local Bot = require(script.Parent.Bot)
 local Combat = require(script.Parent.Combat)
 local Combatants = require(script.Parent.Combatants)
 local Config = require(ReplicatedStorage.Shared.Config)
+local Gadgets = require(script.Parent.Gadgets)
+local Loadout = require(script.Parent.Loadout)
 local Map = require(script.Parent.Map)
 local Net = require(script.Parent.Net)
 local Rig = require(script.Parent.Rig)
 
 type Combatant = Combatants.Combatant
 type TeamId = Config.TeamId
-type Entry = { player: Player?, team: TeamId, name: string }
+type Entry = { player: Player?, team: TeamId, name: string, combatant: Combatant? }
 type Result = TeamId | "Draw"
 type Scores = { Navy: number, Grey: number }
 
@@ -24,6 +27,7 @@ local Match = {}
 local state = Instance.new("Folder")
 state.Name = "GameState"
 state:SetAttribute("Phase", "Waiting")
+state:SetAttribute("Mode", "1v1")
 state.Parent = ReplicatedStorage
 
 local bots = Instance.new("Folder")
@@ -35,6 +39,7 @@ local roster: { Entry } = {}
 local forfeit: TeamId? = nil
 local decided = false
 local lastElimination = ""
+local random = Random.new()
 
 local function other(team: TeamId): TeamId
 	return if team == "Navy" then "Grey" else "Navy"
@@ -57,7 +62,15 @@ local function inRoster(player: Player): Entry?
 	return nil
 end
 
-local random = Random.new()
+local function teamNames(team: TeamId): string
+	local names = {}
+	for _, e in roster do
+		if e.team == team then
+			table.insert(names, e.name)
+		end
+	end
+	return table.concat(names, " & ")
+end
 
 local function toGallery(player: Player, gallery: CFrame)
 	player:SetAttribute("Team", nil)
@@ -83,7 +96,7 @@ local function living(team: TeamId): { Combatant }
 	return out
 end
 
--- Combat stops the instant a side is wiped out, so the survivor can't keep shooting into the end.
+-- Combat stops the instant a side is wiped out, so the survivors can't keep shooting into the end.
 local function latchIfWiped()
 	if Combat.isLive() and (#living("Navy") == 0 or #living("Grey") == 0) then
 		setPhase("RoundEnd")
@@ -102,6 +115,39 @@ Combat.onElimination = function(victim, attacker, zone)
 			.. (if zone == "Head" then " with a HEADSHOT" else "")
 	end
 	latchIfWiped()
+end
+
+-- Gives every combatant its kit: the picked loadout, or a Sudden Death role resolved per team.
+local function armAll()
+	local sudden = state:GetAttribute("SuddenDeath") == true
+	for _, team in { "Navy", "Grey" } :: { TeamId } do
+		local members: { Entry } = {}
+		for _, e in roster do
+			if e.team == team and e.combatant then
+				table.insert(members, e)
+			end
+		end
+		local players: { Player? } = {}
+		for i, e in members do
+			players[i] = e.player
+		end
+		local roles = if sudden then Loadout.roles(players, #members) else {}
+		for i, e in members do
+			local c = e.combatant :: Combatant
+			-- Bots roll their loadout once per round; Sudden Death roles can still shift with picks.
+			if e.player or sudden or #c.weapons == 0 then
+				local kit = if sudden then Loadout.suddenDeath(roles[i]) else Loadout.standard(e.player)
+				Combat.arm(c, kit.weapons, kit.gadget)
+			end
+		end
+	end
+end
+
+-- Picks made during the freeze show up immediately (the screen previews the real kit).
+Loadout.onChange = function(player)
+	if state:GetAttribute("Phase") == "Freeze" and inRoster(player) then
+		armAll()
+	end
 end
 
 local function spawnEntry(entry: Entry, cf: CFrame, info: Map.MapInfo): Combatant?
@@ -140,6 +186,7 @@ end
 
 local function playRound(round: number, info: Map.MapInfo, scores: Scores): Result?
 	Combatants.clear()
+	Gadgets.reset()
 	bots:ClearAllChildren()
 	lastElimination = ""
 	local navySide = if round % 2 == 1 then "A" else "B"
@@ -150,28 +197,36 @@ local function playRound(round: number, info: Map.MapInfo, scores: Scores): Resu
 	setPhase("Freeze")
 
 	local slots = { Navy = 0, Grey = 0 }
-	local spawned: { Combatant } = {}
 	for _, entry in roster do
 		local side = if entry.team == "Navy" then navySide else (if navySide == "A" then "B" else "A")
 		slots[entry.team] += 1
 		local cf = (info.spawns :: any)[side][slots[entry.team]]
-		local c = spawnEntry(entry, cf, info)
-		if c then
-			table.insert(spawned, c)
-		elseif not forfeit then
+		entry.combatant = spawnEntry(entry, cf, info)
+		if not entry.combatant then
+			-- They left mid-spawn or their character failed to load: a bot stands in for this round.
+			local standIn: Entry = { player = nil, team = entry.team, name = `{Config.Bot.Name} (stand-in)` }
+			entry.combatant = spawnEntry(standIn, cf, info)
+		end
+		if not entry.combatant and not forfeit then
 			-- A side that can't field anyone loses the match rather than leaving a one-sided round.
 			forfeit = entry.team
 		end
 	end
+	armAll()
+	-- The pick countdown starts once everyone is in, so slow character loads don't eat into it.
 	state:SetAttribute("FreezeEndsAt", workspace:GetServerTimeNow() + Config.FreezeSeconds)
 	banner("RoundStart", { round = round, sudden = sudden, navySide = navySide })
-	task.wait(Config.FreezeSeconds)
+	local freezeEnds = os.clock() + Config.FreezeSeconds
+	while os.clock() < freezeEnds and not forfeit do
+		task.wait(0.1)
+	end
 	if forfeit then
 		return nil
 	end
 
+	armAll() -- final kits (Sudden Death roles are settled now)
 	local now = os.clock()
-	for _, c in spawned do
+	for _, c in Combatants.all() do
 		if c.root.Parent then
 			c.root.Anchored = false
 			Combatants.teleport(c, c.root.CFrame)
@@ -200,6 +255,7 @@ local function playRound(round: number, info: Map.MapInfo, scores: Scores): Resu
 		return nil
 	end
 	if timedOut then
+		lastElimination = "Time ran out"
 		return "Draw"
 	end
 	local navyUp, greyUp = #living("Navy") > 0, #living("Grey") > 0
@@ -208,6 +264,7 @@ local function playRound(round: number, info: Map.MapInfo, scores: Scores): Resu
 	elseif greyUp and not navyUp then
 		return "Grey"
 	end
+	lastElimination = "Both sides were eliminated"
 	return "Draw"
 end
 
@@ -217,9 +274,10 @@ local function playMatch(info: Map.MapInfo)
 	decided = false
 	state:SetAttribute("NavyScore", 0)
 	state:SetAttribute("GreyScore", 0)
-	state:SetAttribute("NavyName", roster[1].name)
-	state:SetAttribute("GreyName", roster[2].name)
+	state:SetAttribute("NavyName", teamNames("Navy"))
+	state:SetAttribute("GreyName", teamNames("Grey"))
 	state:SetAttribute("Winner", nil)
+	Loadout.resetRoles()
 
 	local round = 0
 	while scores.Navy < Config.RoundsToWin and scores.Grey < Config.RoundsToWin and not forfeit do
@@ -237,7 +295,7 @@ local function playMatch(info: Map.MapInfo)
 		state:SetAttribute("GreyScore", scores.Grey)
 		-- The fifth point locks the result; leaving during the banners can't flip it.
 		decided = scores.Navy >= Config.RoundsToWin or scores.Grey >= Config.RoundsToWin
-		banner("RoundEnd", { winner = result, detail = if result == "Draw" then "Time ran out" else lastElimination })
+		banner("RoundEnd", { winner = result, detail = lastElimination })
 		task.wait(Config.RoundEndSeconds)
 	end
 
@@ -254,24 +312,36 @@ local function playMatch(info: Map.MapInfo)
 	})
 	task.wait(Config.MatchEndSeconds)
 	Combatants.clear()
+	Gadgets.reset()
 	bots:ClearAllChildren()
 end
 
--- Up to two waiting players duel; a bot fills the second slot. Players who just played go to the
--- back of the queue so a third player gets a turn.
-local function pickRoster()
+-- A short lobby where anyone can switch the next match between 1v1 and 2v2; then the first waiting
+-- players fill the teams (alternating Navy, Grey) and bots take the empty slots. Players who just
+-- played go to the back of the queue so others get a turn.
+local function pickRoster(): boolean
 	while #queue == 0 do
 		setPhase("Waiting")
 		task.wait(0.5)
 	end
+	state:SetAttribute("LobbyEndsAt", workspace:GetServerTimeNow() + Config.LobbySeconds)
+	setPhase("Lobby")
+	task.wait(Config.LobbySeconds)
+	if #queue == 0 then
+		return false -- everyone left during the countdown
+	end
+	local perTeam = if state:GetAttribute("Mode") == "2v2" then 2 else 1
 	roster = {}
-	local teams: { TeamId } = { "Navy", "Grey" }
-	for i, team in teams do
+	local botNumber = 0
+	for i = 1, perTeam * 2 do
+		local team: TeamId = if i % 2 == 1 then "Navy" else "Grey"
 		local player = queue[i]
 		if player then
-			table.insert(roster, { player = player, team = team :: TeamId, name = player.DisplayName } :: Entry)
+			table.insert(roster, { player = player, team = team, name = player.DisplayName } :: Entry)
 		else
-			table.insert(roster, { player = nil, team = team :: TeamId, name = Config.Bot.Name } :: Entry)
+			botNumber += 1
+			local name = if perTeam == 1 then Config.Bot.Name else `{Config.Bot.Name} {botNumber}`
+			table.insert(roster, { player = nil, team = team, name = name } :: Entry)
 		end
 	end
 	for _, e in roster do
@@ -280,14 +350,16 @@ local function pickRoster()
 			table.insert(queue, table.remove(queue, i) :: Player)
 		end
 	end
+	return true
 end
 
 function Match.run(info: Map.MapInfo)
 	Players.CharacterAutoLoads = false
 	local function joined(player: Player)
 		table.insert(queue, player)
-		-- Mid-match arrivals watch from the gallery; while waiting, pickRoster spawns them directly.
-		if state:GetAttribute("Phase") ~= "Waiting" then
+		-- Mid-match arrivals watch from the gallery; otherwise pickRoster spawns them directly.
+		local phase = state:GetAttribute("Phase")
+		if phase ~= "Waiting" and phase ~= "Lobby" then
 			task.spawn(toGallery, player, info.gallery)
 		end
 	end
@@ -301,13 +373,36 @@ function Match.run(info: Map.MapInfo)
 			table.remove(queue, i)
 		end
 		local entry = inRoster(player)
-		if entry and not decided and state:GetAttribute("Phase") ~= "MatchEnd" then
+		if not entry or decided or state:GetAttribute("Phase") == "MatchEnd" then
+			return
+		end
+		-- The leaver's slot goes to a bot from next round on; their character is out now.
+		entry.player = nil
+		entry.name = `{Config.Bot.Name} (sub)`
+		if entry.combatant then
+			entry.combatant.alive = false
+			latchIfWiped()
+		end
+		local teamHasPlayer = false
+		for _, e in roster do
+			teamHasPlayer = teamHasPlayer or (e.team == entry.team and e.player ~= nil)
+		end
+		if not teamHasPlayer then
 			forfeit = entry.team
+		end
+	end)
+	Net.Mode.OnServerEvent:Connect(function(player, mode)
+		local phase = state:GetAttribute("Phase")
+		local open = phase == "Lobby" or phase == "MatchEnd" or phase == "Waiting"
+		if open and (mode == "1v1" or mode == "2v2") and Net.allow(player, "Mode", 4, 2) then
+			state:SetAttribute("Mode", mode)
 		end
 	end)
 
 	while true do
-		pickRoster()
+		while not pickRoster() do
+			task.wait()
+		end
 		for _, player in Players:GetPlayers() do
 			if not inRoster(player) and player:GetAttribute("Team") ~= nil then
 				task.spawn(toGallery, player, info.gallery)

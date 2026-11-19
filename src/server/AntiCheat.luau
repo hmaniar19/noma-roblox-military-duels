@@ -112,9 +112,16 @@ end
 
 function AntiCheat.start(min: Vector3, max: Vector3)
 	boundsMin, boundsMax = min, max
-	-- Movement is only cheat-proof under Server Authority; refuse to run a duel without it.
-	if workspace.AuthorityMode ~= Enum.AuthorityMode.Server then
+	-- Movement is only cheat-proof under Server Authority; refuse to run a duel when it is off. The
+	-- property is readable in Studio and live servers today; the pcall keeps a future restriction on
+	-- reading it from taking the whole server down.
+	local readable, mode = pcall(function()
+		return workspace.AuthorityMode
+	end)
+	if readable and mode ~= Enum.AuthorityMode.Server then
 		error("[AntiCheat] Workspace.AuthorityMode must be Server (set in default.project.json)")
+	elseif not readable then
+		warn("[AntiCheat] could not read Workspace.AuthorityMode; assuming the project setting (Server)")
 	end
 	RunService.Heartbeat:Connect(function()
 		local now = os.clock()
