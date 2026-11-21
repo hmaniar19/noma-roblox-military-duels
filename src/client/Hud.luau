@@ -130,7 +130,7 @@ local hint = text(
 	Color3.fromRGB(210, 210, 210)
 )
 hint.TextXAlignment = Enum.TextXAlignment.Right
-hint.Text = "CLICK fire  RIGHT-CLICK aim  R reload  1-3/WHEEL switch  G gadget"
+hint.Text = "CLICK fire  RCLICK aim  R reload  1-3 switch  G gadget  SHIFT sprint  C crouch/slide  SPACE x2 jump"
 local slotsLabel = text(gui, UDim2.fromOffset(460, 20), UDim2.new(1, -24, 1, -92), Vector2.new(1, 1), 15)
 slotsLabel.TextXAlignment = Enum.TextXAlignment.Right
 

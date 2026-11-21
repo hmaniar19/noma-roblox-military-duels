@@ -93,6 +93,7 @@ local function check(c: Combatants.Combatant, now: number, force: boolean)
 	if inside(pos, boundsMin, boundsMax) then
 		if c.humanoid.FloorMaterial ~= Enum.Material.Air then
 			c.lastGrounded = root.CFrame
+			c.doubleJumped = false -- landing recharges the mid-air jump
 		end
 		return
 	end

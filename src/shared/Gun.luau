@@ -10,11 +10,12 @@ local POLYMER = Color3.fromRGB(70, 66, 56)
 local WOOD = Color3.fromRGB(110, 72, 44)
 local STEEL = Color3.fromRGB(190, 195, 200)
 
-type Piece = { size: Vector3, at: CFrame, color: Color3 }
+type Piece = { size: Vector3, at: CFrame, color: Color3, name: string? }
 
--- size, offset from the grip, color. The grip itself is the Handle.
-local function P(size: Vector3, at: CFrame, color: Color3): Piece
-	return { size = size, at = at, color = color }
+-- size, offset from the grip, color, and an optional name. The grip itself is the Handle.
+-- "Mag" and "Pump" are moved by the client's reload animation.
+local function P(size: Vector3, at: CFrame, color: Color3, name: string?): Piece
+	return { size = size, at = at, color = color, name = name }
 end
 
 local SHAPES: { [Config.WeaponId]: { muzzle: Vector3, pieces: { Piece } } } = {
@@ -24,7 +25,7 @@ local SHAPES: { [Config.WeaponId]: { muzzle: Vector3, pieces: { Piece } } } = {
 			P(Vector3.new(0.35, 0.45, 2.4), CFrame.new(0, 0.5, -0.6), METAL),
 			P(Vector3.new(0.18, 0.18, 1.6), CFrame.new(0, 0.55, -2.5), METAL),
 			P(Vector3.new(0.3, 0.3, 1.0), CFrame.new(0, 0.5, -1.9), POLYMER),
-			P(Vector3.new(0.25, 0.8, 0.45), CFrame.new(0, -0.1, -1.0), METAL),
+			P(Vector3.new(0.25, 0.8, 0.45), CFrame.new(0, -0.1, -1.0), METAL, "Mag"),
 			P(Vector3.new(0.3, 0.5, 1.1), CFrame.new(0, 0.35, 1.0), POLYMER),
 			P(Vector3.new(0.12, 0.22, 0.6), CFrame.new(0, 0.85, -0.4), METAL),
 		},
@@ -34,7 +35,7 @@ local SHAPES: { [Config.WeaponId]: { muzzle: Vector3, pieces: { Piece } } } = {
 		pieces = {
 			P(Vector3.new(0.35, 0.5, 1.6), CFrame.new(0, 0.5, -0.5), METAL),
 			P(Vector3.new(0.16, 0.16, 0.6), CFrame.new(0, 0.5, -1.6), METAL),
-			P(Vector3.new(0.22, 1.1, 0.35), CFrame.new(0, -0.25, -0.75), METAL),
+			P(Vector3.new(0.22, 1.1, 0.35), CFrame.new(0, -0.25, -0.75), METAL, "Mag"),
 			P(Vector3.new(0.12, 0.25, 0.7), CFrame.new(0, 0.45, 0.6), METAL),
 		},
 	},
@@ -43,7 +44,7 @@ local SHAPES: { [Config.WeaponId]: { muzzle: Vector3, pieces: { Piece } } } = {
 		pieces = {
 			P(Vector3.new(0.35, 0.45, 1.4), CFrame.new(0, 0.5, -0.3), METAL),
 			P(Vector3.new(0.26, 0.26, 2.4), CFrame.new(0, 0.6, -2.2), METAL),
-			P(Vector3.new(0.3, 0.26, 1.0), CFrame.new(0, 0.3, -2.0), WOOD),
+			P(Vector3.new(0.3, 0.26, 1.0), CFrame.new(0, 0.3, -2.0), WOOD, "Pump"),
 			P(Vector3.new(0.32, 0.55, 1.3), CFrame.new(0, 0.3, 1.0), WOOD),
 		},
 	},
@@ -52,6 +53,7 @@ local SHAPES: { [Config.WeaponId]: { muzzle: Vector3, pieces: { Piece } } } = {
 		pieces = {
 			P(Vector3.new(0.25, 0.32, 1.1), CFrame.new(0, 0.5, -0.4), METAL),
 			P(Vector3.new(0.12, 0.12, 0.2), CFrame.new(0, 0.5, -1.0), METAL),
+			P(Vector3.new(0.2, 0.3, 0.28), CFrame.new(0, -0.32, 0.02), METAL, "Mag"), -- base of the grip magazine
 		},
 	},
 	Sniper = {
@@ -60,7 +62,7 @@ local SHAPES: { [Config.WeaponId]: { muzzle: Vector3, pieces: { Piece } } } = {
 			P(Vector3.new(0.35, 0.45, 2.2), CFrame.new(0, 0.5, -0.5), POLYMER),
 			P(Vector3.new(0.16, 0.16, 2.6), CFrame.new(0, 0.55, -3.0), METAL),
 			P(Vector3.new(0.3, 0.3, 1.3), CFrame.new(0, 1.0, -0.6), METAL), -- scope
-			P(Vector3.new(0.25, 0.55, 0.4), CFrame.new(0, -0.05, -0.6), METAL),
+			P(Vector3.new(0.25, 0.55, 0.4), CFrame.new(0, -0.05, -0.6), METAL, "Mag"),
 			P(Vector3.new(0.32, 0.6, 1.3), CFrame.new(0, 0.35, 1.1), POLYMER),
 		},
 	},
@@ -99,7 +101,10 @@ function Gun.build(parent: Instance, id: Config.WeaponId): Part
 		piece(parent, nil, Vector3.new(0.3, 0.7, 0.4), CFrame.identity, if id == "Knife" then WOOD else POLYMER)
 	handle.Name = "Handle"
 	for _, p in shape.pieces do
-		piece(parent, handle, p.size, p.at, p.color)
+		local part = piece(parent, handle, p.size, p.at, p.color)
+		if p.name then
+			part.Name = p.name
+		end
 	end
 	local muzzle = Instance.new("Attachment")
 	muzzle.Name = "Muzzle"

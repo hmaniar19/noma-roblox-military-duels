@@ -1,5 +1,6 @@
 {
   "name": "military-duels",
+  "servePort": 34873,
   "tree": {
     "$className": "DataModel",
     "ReplicatedStorage": {
@@ -37,6 +38,12 @@
         "SignalBehavior": "Deferred",
         "UseFixedSimulation": "Enabled",
         "StreamingEnabled": true
+      },
+      "Terrain": {
+        "$properties": {
+          "Decoration": true,
+          "GrassLength": 1
+        }
       }
     },
     "Lighting": {

@@ -21,6 +21,10 @@ export type Combatant = {
 	gadget: Config.GadgetId?,
 	gadgetLeft: number,
 	healingUntil: number, -- med kit channel end, 0 when not healing
+	stance: "Stand" | "Sprint" | "Crouch",
+	slideUntil: number, -- slide burst end
+	lastSlide: number,
+	doubleJumped: boolean, -- the one mid-air jump is used until the next landing
 	reloadToken: number,
 	reloading: boolean,
 	lastShot: number,
@@ -37,7 +41,7 @@ local HISTORY_SECONDS = 1
 
 local Combatants = {}
 
-local SYNCED = { "Weapon", "Slots", "Ammo", "Reloading", "Gadget", "GadgetLeft", "Healing", "Shielded" }
+local SYNCED = { "Weapon", "Slots", "Ammo", "Reloading", "Gadget", "GadgetLeft", "Healing", "Shielded", "Stance" }
 
 local list: { Combatant } = {}
 
@@ -56,6 +60,10 @@ function Combatants.new(name: string, player: Player?, team: Config.TeamId, mode
 		gadget = nil,
 		gadgetLeft = 0,
 		healingUntil = 0,
+		stance = "Stand",
+		slideUntil = 0,
+		lastSlide = 0,
+		doubleJumped = false,
 		reloadToken = 0,
 		reloading = false,
 		lastShot = 0,
@@ -114,6 +122,7 @@ function Combatants.sync(c: Combatant)
 		player:SetAttribute("Gadget", c.gadget)
 		player:SetAttribute("GadgetLeft", c.gadgetLeft)
 		player:SetAttribute("Healing", c.healingUntil > 0)
+		player:SetAttribute("Stance", c.stance)
 		player:SetAttribute("Shielded", os.clock() < c.shieldUntil)
 	end
 end

@@ -36,10 +36,19 @@ local function rayBox(origin: Vector3, dir: Vector3, maxDist: number, box: CFram
 end
 
 -- Nearest zone hit by the ray on a combatant whose HumanoidRootPart is at `root`.
-function Hitbox.cast(origin: Vector3, dir: Vector3, maxDist: number, root: CFrame): (Config.Zone?, number?)
+function Hitbox.cast(
+	origin: Vector3,
+	dir: Vector3,
+	maxDist: number,
+	root: CFrame,
+	crouched: boolean?
+): (Config.Zone?, number?)
 	local bestZone: Config.Zone? = nil
 	local bestDist = math.huge
-	for _, hb in Config.Hitboxes do
+	local boxes: { { zone: Config.Zone, offset: Vector3, size: Vector3 } } = if crouched
+		then Config.CrouchHitboxes
+		else Config.Hitboxes
+	for _, hb in boxes do
 		local t = rayBox(origin, dir, maxDist, root * CFrame.new(hb.offset), hb.size)
 		if t and t < bestDist then
 			bestZone, bestDist = hb.zone, t

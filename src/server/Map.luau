@@ -188,10 +188,35 @@ local function target(cf: CFrame)
 	end
 end
 
+-- Terrain grass with animated 3D blades (Decoration and GrassLength are set in default.project.json;
+-- scripts can't change them at runtime), leafy patches for variety, worn dirt paths, sand berms.
 local function terrain()
 	local t = workspace.Terrain
 	t:Clear()
+	pcall(function()
+		t:SetMaterialColor(Enum.Material.Grass, Color3.fromRGB(92, 120, 54))
+		t:SetMaterialColor(Enum.Material.LeafyGrass, Color3.fromRGB(78, 104, 46))
+		t:SetMaterialColor(Enum.Material.Ground, Color3.fromRGB(104, 88, 66))
+		t:SetMaterialColor(Enum.Material.Mud, Color3.fromRGB(74, 60, 46))
+		t:SetMaterialColor(Enum.Material.Sand, Color3.fromRGB(196, 178, 136))
+	end)
 	t:FillBlock(CFrame.new(0, -6, 0), Vector3.new(420, 12, 320), Enum.Material.Grass)
+	-- Patches of darker leafy grass so the field isn't one flat color. A thin layer at the surface
+	-- changes the material without raising the ground.
+	local seed = Random.new(1945)
+	for _ = 1, 34 do
+		local at = CFrame.new(seed:NextNumber(-HALF_X, HALF_X), -1, seed:NextNumber(-HALF_Z, HALF_Z))
+		t:FillCylinder(at, 2, seed:NextNumber(5, 13), Enum.Material.LeafyGrass)
+	end
+	-- Worn dirt paths: from each spawn toward the tower, and a ring around the tower base.
+	for _, side in { -1, 1 } do
+		t:FillBlock(
+			CFrame.new(side * 62, -1, 0) * CFrame.Angles(0, side * 0.05, 0),
+			Vector3.new(80, 2, 4.5),
+			Enum.Material.Ground
+		)
+	end
+	t:FillCylinder(CFrame.new(0, -1, 0), 2, 13, Enum.Material.Ground)
 	-- Sand berm around the edge so the boundary reads as a wall, not an invisible cliff.
 	for _, s in
 		{
@@ -212,18 +237,44 @@ local function terrain()
 	end
 end
 
+-- Bare earth under everything built on the ground, so grass blades don't poke through floors.
+local function clearGrassUnderBuildings()
+	for _, p in geometry:GetDescendants() do
+		if p:IsA("BasePart") and p.Transparency < 1 and p.Position.Y - p.Size.Y / 2 < 0.8 and p.Size.Y < 30 then
+			local flat = p.CFrame - p.CFrame.Position + Vector3.new(p.Position.X, -1, p.Position.Z)
+			workspace.Terrain:FillBlock(flat, Vector3.new(p.Size.X + 1, 2, p.Size.Z + 1), Enum.Material.Ground)
+		end
+	end
+end
+
+-- Late-afternoon sun with soft shadows, haze, volumetric clouds and light color grading.
 local function lighting()
-	Lighting.ClockTime = 14.5
-	Lighting.Brightness = 2.5
-	Lighting.OutdoorAmbient = Color3.fromRGB(130, 130, 125)
-	Lighting.EnvironmentDiffuseScale = 0.6
-	Lighting.EnvironmentSpecularScale = 0.4
+	Lighting.ClockTime = 15.2
+	Lighting.Brightness = 3
+	Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 122)
+	Lighting.EnvironmentDiffuseScale = 1
+	Lighting.EnvironmentSpecularScale = 1
+	Lighting.ShadowSoftness = 0.15
 	local atmosphere = Instance.new("Atmosphere")
-	atmosphere.Density = 0.28
-	atmosphere.Haze = 1.2
-	atmosphere.Color = Color3.fromRGB(205, 210, 200)
-	atmosphere.Decay = Color3.fromRGB(110, 120, 110)
+	atmosphere.Density = 0.3
+	atmosphere.Haze = 1.4
+	atmosphere.Glare = 0.3
+	atmosphere.Color = Color3.fromRGB(205, 212, 208)
+	atmosphere.Decay = Color3.fromRGB(108, 118, 110)
 	atmosphere.Parent = Lighting
+	local grade = Instance.new("ColorCorrectionEffect")
+	grade.Contrast, grade.Saturation = 0.08, 0.06
+	grade.TintColor = Color3.fromRGB(255, 250, 240)
+	grade.Parent = Lighting
+	local bloom = Instance.new("BloomEffect")
+	bloom.Intensity, bloom.Size, bloom.Threshold = 0.35, 24, 1.6
+	bloom.Parent = Lighting
+	local rays = Instance.new("SunRaysEffect")
+	rays.Intensity, rays.Spread = 0.06, 0.6
+	rays.Parent = Lighting
+	local clouds = Instance.new("Clouds")
+	clouds.Cover, clouds.Density = 0.55, 0.65
+	clouds.Parent = workspace.Terrain
 end
 
 function Map.build(): MapInfo
@@ -325,6 +376,8 @@ function Map.build(): MapInfo
 		Vector3.new(-40, 6, 32),
 		Vector3.new(40, 6, -32),
 	}
+
+	clearGrassUnderBuildings()
 
 	return {
 		spawns = spawns,

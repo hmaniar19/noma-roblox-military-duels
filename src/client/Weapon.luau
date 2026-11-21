@@ -20,6 +20,7 @@ local Gadget = remotes:WaitForChild("Gadget") :: RemoteEvent
 local Reload = remotes:WaitForChild("Reload") :: RemoteEvent
 local Aim = remotes:WaitForChild("Aim") :: RemoteEvent
 local Look = remotes:WaitForChild("Look") :: RemoteEvent
+local Stance = remotes:WaitForChild("Stance") :: RemoteEvent
 local ShotFx = remotes:WaitForChild("ShotFx") :: RemoteEvent
 local Banner = remotes:WaitForChild("Banner") :: RemoteEvent
 
@@ -35,6 +36,7 @@ local firing = false
 local aimBlend = 0
 local recoil = 0
 local swing = 0
+local sprintBlend = 0
 local lastLook = 0
 local lastFire = 0
 
@@ -42,6 +44,14 @@ local viewmodel = Instance.new("Model")
 viewmodel.Name = "Viewmodel"
 local vmId: Config.WeaponId? = nil
 local muzzle: Attachment? = nil
+
+-- Reload animation: the magazine (or shotgun shells and pump) move relative to the handle.
+local VM_SCALE = 0.42
+local magPart: BasePart?, magHome: CFrame? = nil, nil
+local pumpPart: BasePart?, pumpHome: CFrame? = nil, nil
+local shell: Part? = nil
+local reloadStart, reloadLength, reloadShells = 0, 1, 1
+local magDropped, magClicked, lastShellSound = false, false, 0
 local flash = Instance.new("PointLight")
 flash.Color = Color3.fromRGB(255, 200, 120)
 flash.Range = 12
@@ -99,6 +109,93 @@ local function refreshViewmodel(id: Config.WeaponId)
 	muzzle = handle:FindFirstChild("Muzzle") :: Attachment
 	flash.Parent = muzzle
 	vmId = id
+	magPart = viewmodel:FindFirstChild("Mag") :: BasePart?
+	magHome = if magPart then handle.CFrame:ToObjectSpace(magPart.CFrame) else nil
+	pumpPart = viewmodel:FindFirstChild("Pump") :: BasePart?
+	pumpHome = if pumpPart then handle.CFrame:ToObjectSpace(pumpPart.CFrame) else nil
+	shell = nil
+	if id == "Shotgun" then
+		local s = Instance.new("Part")
+		s.Shape = Enum.PartType.Cylinder
+		s.Size = Vector3.new(0.5, 0.2, 0.2) * VM_SCALE
+		s.Color = Color3.fromRGB(170, 30, 30)
+		s.Material = Enum.Material.SmoothPlastic
+		s.Anchored, s.CanCollide, s.CanQuery, s.CanTouch, s.CastShadow = true, false, false, false, false
+		s.Transparency = 1
+		s.Parent = viewmodel
+		shell = s
+	end
+end
+
+local function ease(x: number): number
+	x = math.clamp(x, 0, 1)
+	return x * x * (3 - 2 * x)
+end
+
+-- The empty magazine falls out of the gun as a real (local-only) physics object.
+local function dropMagazine(from: BasePart)
+	local camera = workspace.CurrentCamera
+	local m = Instance.new("Part")
+	m.Size = from.Size / VM_SCALE
+	m.CFrame = from.CFrame
+	m.Color, m.Material = from.Color, from.Material
+	m.CanQuery, m.CanTouch = false, false
+	m.Parent = fxFolder
+	m.AssemblyLinearVelocity = camera.CFrame.RightVector * 3 - Vector3.new(0, 6, 0)
+	m.AssemblyAngularVelocity = Vector3.new(math.random() * 6 - 3, math.random() * 6 - 3, math.random() * 6 - 3)
+	task.delay(6, m.Destroy, m)
+end
+
+-- Places the magazine, shell and pump for reload progress `t` (0..1), or `nil` when not reloading.
+-- Magazines: out (15-35%), hand away (35-55%), new one in (55-80%), click and rack. Shotguns: one
+-- shell per missing round, then a pump. The pump also cycles after every shotgun blast.
+local function animateParts(handle: BasePart, id: Config.WeaponId, t: number?, sinceShot: number)
+	local s = VM_SCALE
+	if magPart and magHome then
+		local off, visible = Vector3.zero, true
+		if t then
+			if t >= 0.15 and t < 0.35 then
+				off = Vector3.new(0, -1.4 * ease((t - 0.15) / 0.2), 0)
+			elseif t >= 0.35 and t < 0.55 then
+				visible = false
+				if not magDropped then
+					magDropped = true
+					dropMagazine(magPart)
+				end
+			elseif t >= 0.55 and t < 0.8 then
+				local k = 1 - ease((t - 0.55) / 0.25)
+				off = Vector3.new(0, -1.6 * k, 0.25 * k)
+			elseif t >= 0.8 and not magClicked then
+				magClicked = true
+				sound(Config.Sounds.Reload, workspace.CurrentCamera, 0.6)
+			end
+		end
+		magPart.CFrame = handle.CFrame * magHome * CFrame.new(off * s)
+		magPart.Transparency = if visible then 0 else 1
+	end
+	if shell then
+		local loading = t ~= nil and t >= 0.1 and t < 0.82
+		shell.Transparency = if loading then 0 else 1
+		if loading then
+			local seg = ((t :: number) - 0.1) / 0.72 * reloadShells
+			local k = ease((seg % 1) / 0.8)
+			local from, to = Vector3.new(0.1, -1.0, -0.4), Vector3.new(0, 0.25, -0.6)
+			shell.CFrame = handle.CFrame * CFrame.new(from:Lerp(to, k) * s) * CFrame.Angles(0, math.pi / 2, 0)
+			if math.floor(seg) ~= lastShellSound and seg % 1 > 0.8 then
+				lastShellSound = math.floor(seg)
+				sound(Config.Sounds.Reload, workspace.CurrentCamera, 0.4)
+			end
+		end
+	end
+	if pumpPart and pumpHome then
+		local pump = 0
+		if t and t >= 0.84 then
+			pump = math.sin(math.clamp((t - 0.84) / 0.16, 0, 1) * math.pi)
+		elseif id == "Shotgun" and sinceShot > 0.15 and sinceShot < 0.6 then
+			pump = math.sin((sinceShot - 0.15) / 0.45 * math.pi)
+		end
+		pumpPart.CFrame = handle.CFrame * pumpHome * CFrame.new(0, 0, 0.5 * pump * s)
+	end
 end
 
 local function setAiming(on: boolean)
@@ -245,6 +342,19 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		if Weapon.inCombat() and id and w and w.kind == "gun" and (player:GetAttribute("Ammo") or 0) < w.magazine then
 			Reload:FireServer()
 		end
+	elseif input.KeyCode == Enum.KeyCode.LeftShift and Weapon.inCombat() then
+		Stance:FireServer("Sprint")
+	elseif input.KeyCode == Enum.KeyCode.C and Weapon.inCombat() then
+		-- C while sprinting slides; otherwise it toggles crouch.
+		local stance = player:GetAttribute("Stance")
+		Stance:FireServer(if stance == "Sprint" then "Slide" elseif stance == "Crouch" then "Stand" else "Crouch")
+	elseif input.KeyCode == Enum.KeyCode.Space and Weapon.inCombat() then
+		-- A second press in mid-air is the double jump (the server allows one per landing).
+		local humanoid = (player.Character :: Model):FindFirstChildOfClass("Humanoid")
+		if humanoid and humanoid.FloorMaterial == Enum.Material.Air then
+			Stance:FireServer("DoubleJump")
+			sound(Config.Sounds.Whoosh, workspace.CurrentCamera, 0.4)
+		end
 	end
 end)
 
@@ -262,11 +372,18 @@ UserInputService.InputEnded:Connect(function(input)
 		firing = false
 	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
 		setAiming(false)
+	elseif input.KeyCode == Enum.KeyCode.LeftShift and player:GetAttribute("Stance") == "Sprint" then
+		Stance:FireServer("Stand")
 	end
 end)
 
 player:GetAttributeChangedSignal("Reloading"):Connect(function()
 	if player:GetAttribute("Reloading") then
+		local _, w = Weapon.current()
+		reloadStart, reloadLength = os.clock(), if w then w.reloadTime else 2
+		local ammo = (player:GetAttribute("Ammo") or 0) :: number
+		reloadShells = if w then math.clamp(w.magazine - ammo, 1, 6) else 1
+		magDropped, magClicked, lastShellSound = false, false, -1
 		sound(Config.Sounds.Reload, workspace.CurrentCamera, 0.5)
 	end
 end)
@@ -335,18 +452,38 @@ RunService.RenderStepped:Connect(function(dt: number)
 	end
 
 	local scoped = id == "Sniper" and aimBlend > 0.9
-	aimBlend += ((if Weapon.aiming and w.kind == "gun" then 1 else 0) - aimBlend) * math.min(dt * 14, 1)
+	local reloading = player:GetAttribute("Reloading") == true
+	local healing = player:GetAttribute("Healing") == true
+	aimBlend += ((if Weapon.aiming and w.kind == "gun" and not reloading then 1 else 0) - aimBlend) * math.min(
+		dt * 14,
+		1
+	)
 	recoil = math.max(recoil - dt * 6, 0)
 	swing = math.max(swing - dt * 5, 0)
 	flash.Brightness = math.max(flash.Brightness - dt * 60, 0)
 	camera.FieldOfView = 70 - (if id == "Sniper" then 50 else 20) * aimBlend
-	local reloading = player:GetAttribute("Reloading") == true or player:GetAttribute("Healing") == true
 	local offset = HIP:Lerp(ADS, aimBlend)
 	local kick = CFrame.new(0, 0, recoil * 0.25) * CFrame.Angles(recoil * 0.08, 0, 0)
 	local stab = CFrame.new(-0.3 * swing, 0.1 * swing, -0.9 * swing) * CFrame.Angles(0, 0, -0.6 * swing)
-	local dip = if reloading then CFrame.new(0, -0.5, 0) * CFrame.Angles(-0.6, 0, 0.3) else CFrame.identity
+	-- Reload: roll the gun to show the magazine well, slap the new one home, roll back.
+	local t = if reloading then math.clamp((now - reloadStart) / reloadLength, 0, 1) else nil
+	local tilt = if t then ease(t / 0.15) * (1 - ease((t - 0.85) / 0.15)) else 0
+	local slap = if t and t > 0.78 and t < 0.86 then math.sin((t - 0.78) / 0.08 * math.pi) * 0.05 else 0
+	local pose = CFrame.new(-0.08 * tilt, -0.1 * tilt + slap, 0.06 * tilt)
+		* CFrame.Angles(0.3 * tilt, 0.2 * tilt, 0.75 * tilt)
+	local dip = if healing then CFrame.new(0, -0.5, 0) * CFrame.Angles(-0.6, 0, 0.3) else CFrame.identity
+	-- Sprinting carries the gun low and angled across the body.
+	sprintBlend += ((if player:GetAttribute("Stance") == "Sprint" then 1 else 0) - sprintBlend) * math.min(dt * 10, 1)
+	dip *= CFrame.new(-0.15 * sprintBlend, -0.15 * sprintBlend, 0.05 * sprintBlend) * CFrame.Angles(
+		-0.35 * sprintBlend,
+		0.5 * sprintBlend,
+		0.2 * sprintBlend
+	)
 	viewmodel.Parent = if scoped then nil else camera
-	viewmodel:PivotTo(camera.CFrame * offset * kick * stab * dip)
+	viewmodel:PivotTo(camera.CFrame * offset * kick * stab * pose * dip)
+	if viewmodel.PrimaryPart then
+		animateParts(viewmodel.PrimaryPart, id, t, now - lastFire)
+	end
 end)
 
 return Weapon

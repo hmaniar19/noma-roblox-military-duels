@@ -52,6 +52,13 @@ local Config = {
 	MaxHealth = 100,
 	WalkSpeed = 16,
 	AimWalkSpeed = 9,
+	SprintSpeed = 24, -- hold Shift
+	CrouchSpeed = 8, -- C toggles crouch
+	SlideSpeed = 34, -- C while sprinting: a burst that slows to crouch speed
+	SlideSeconds = 0.75,
+	SlideCooldown = 1.2,
+	CrouchHipHeight = 0.9, -- standing R15 HipHeight is 2; this drops the body about 1.1 studs
+	DoubleJumpVelocity = 40, -- upward speed of the mid-air second jump (a normal jump is 42)
 	JumpPower = 42,
 
 	ZoneMultiplier = {
@@ -66,6 +73,13 @@ local Config = {
 		{ zone = "Head" :: Zone, offset = Vector3.new(0, 1.95, 0), size = Vector3.new(1.25, 1.25, 1.25) },
 		{ zone = "Body" :: Zone, offset = Vector3.new(0, 0.45, 0), size = Vector3.new(2.6, 2.1, 1.2) },
 		{ zone = "Legs" :: Zone, offset = Vector3.new(0, -1.75, 0), size = Vector3.new(1.8, 2.3, 1.1) },
+	} :: { { zone: Zone, offset: Vector3, size: Vector3 } },
+
+	-- Crouched: the root is ~1.1 studs lower, so the boxes are shorter and sit lower around it.
+	CrouchHitboxes = {
+		{ zone = "Head" :: Zone, offset = Vector3.new(0, 1.5, -0.15), size = Vector3.new(1.25, 1.25, 1.25) },
+		{ zone = "Body" :: Zone, offset = Vector3.new(0, 0.35, 0), size = Vector3.new(2.6, 1.9, 1.4) },
+		{ zone = "Legs" :: Zone, offset = Vector3.new(0, -1.0, 0), size = Vector3.new(1.8, 1.4, 1.6) },
 	} :: { { zone: Zone, offset: Vector3, size: Vector3 } },
 
 	-- One table for every weapon; the server enforces all of it.
@@ -207,13 +221,16 @@ local Config = {
 
 	Bot = {
 		Name = "Recruit Bot",
-		ReactionTime = 0.45,
-		AimErrorDegrees = 3.2, -- grows with distance
-		HeadshotChance = 0.18,
+		ReactionTime = 0.75, -- seconds from spotting you to the first shot
+		AimErrorDegrees = 5, -- base miss cone; grows with distance. Settled: ~58% body hits at 20 studs, ~16% at 40
+		AimSettleSeconds = 1.5, -- aim starts up to twice as wide and settles over this long
+		MovingTargetPenalty = 1.6, -- extra miss cone against a running target
+		SniperAimScale = 0.55, -- the sniper aims tighter, but not perfectly
+		HeadshotChance = 0.07,
 		RetreatHealth = 35, -- below this (or while reloading) the bot falls back to hidden cover
 		HealBelow = 60, -- a bot carrying a med kit uses it in cover below this
-		BurstShots = 5,
-		BurstPause = 0.35,
+		BurstShots = 4,
+		BurstPause = 0.6,
 		Think = 0.1,
 	},
 

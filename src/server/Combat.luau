@@ -52,7 +52,8 @@ Combat.occlusion = occlusion
 Combat.fxFolder = fxFolder
 
 function Combat.headPosition(c: Combatant): Vector3
-	return (c.root.CFrame * CFrame.new(HEAD_OFFSET)).Position
+	local offset = if c.stance == "Crouch" then Config.CrouchHitboxes[1].offset else HEAD_OFFSET
+	return (c.root.CFrame * CFrame.new(offset)).Position
 end
 
 function Combat.dropShield(c: Combatant)
@@ -60,6 +61,83 @@ function Combat.dropShield(c: Combatant)
 	local field = c.model:FindFirstChildOfClass("ForceField")
 	if field then
 		field:Destroy()
+	end
+end
+
+-- Movement speed from stance, aiming and slide. The server owns it (Server Authority predicts it).
+function Combat.applySpeed(c: Combatant)
+	if not c.alive or os.clock() < c.slideUntil then
+		return
+	end
+	c.humanoid.WalkSpeed = if c.stance == "Crouch"
+		then Config.CrouchSpeed
+		elseif c.aiming then Config.AimWalkSpeed
+		elseif c.stance == "Sprint" then Config.SprintSpeed
+		else Config.WalkSpeed
+end
+
+local standingPose: { [Motor6D]: CFrame } = setmetatable({}, { __mode = "k" }) :: any
+local LEG_BENDS: { [string]: number } = { LeftHip = 70, RightHip = 70, LeftKnee = -110, RightKnee = -110 }
+
+-- Crouching lowers the body (HipHeight) and bends hips and knees so the legs fold instead of sinking
+-- into the ground. Hit detection switches to Config.CrouchHitboxes.
+local function crouchPose(c: Combatant, crouched: boolean)
+	c.humanoid.HipHeight = if crouched then Config.CrouchHipHeight else 2
+	for name, degrees in LEG_BENDS do
+		local joint = c.model:FindFirstChild(name, true)
+		if joint and joint:IsA("Motor6D") then
+			standingPose[joint] = standingPose[joint] or joint.C0
+			joint.C0 = if crouched
+				then standingPose[joint] * CFrame.Angles(math.rad(degrees), 0, 0)
+				else standingPose[joint]
+		end
+	end
+end
+
+function Combat.setStance(c: Combatant, stance: "Stand" | "Sprint" | "Crouch")
+	if not c.alive or c.stance == stance then
+		return
+	end
+	if (stance == "Crouch") ~= (c.stance == "Crouch") then
+		crouchPose(c, stance == "Crouch")
+	end
+	c.stance = stance
+	Combat.applySpeed(c)
+	Combatants.sync(c)
+end
+
+-- Sprint + C: a burst of speed that bleeds off into a crouch.
+function Combat.slide(c: Combatant)
+	local now = os.clock()
+	if c.stance ~= "Sprint" or now - c.lastSlide < Config.SlideCooldown then
+		return
+	end
+	if c.humanoid.FloorMaterial == Enum.Material.Air then
+		return
+	end
+	c.lastSlide = now
+	Combat.setStance(c, "Crouch")
+	c.slideUntil = now + Config.SlideSeconds
+	task.spawn(function()
+		while c.alive and os.clock() < c.slideUntil do
+			local k = (c.slideUntil - os.clock()) / Config.SlideSeconds
+			c.humanoid.WalkSpeed = Config.CrouchSpeed + (Config.SlideSpeed - Config.CrouchSpeed) * k
+			task.wait(0.05)
+		end
+		Combat.applySpeed(c)
+	end)
+end
+
+-- One extra jump in mid-air, recharged on landing. The server applies the push, so it can't be spammed.
+function Combat.doubleJump(c: Combatant)
+	if not c.alive or c.doubleJumped or c.humanoid.FloorMaterial ~= Enum.Material.Air then
+		return
+	end
+	c.doubleJumped = true
+	local v = c.root.AssemblyLinearVelocity
+	c.root.AssemblyLinearVelocity = Vector3.new(v.X, Config.DoubleJumpVelocity, v.Z)
+	if c.stance == "Crouch" then
+		Combat.setStance(c, "Stand")
 	end
 end
 
@@ -73,7 +151,7 @@ function Combat.equip(c: Combatant, index: number)
 	c.reloadToken += 1 -- switching cancels a reload
 	c.reloading = false
 	c.aiming = false
-	c.humanoid.WalkSpeed = Config.WalkSpeed
+	Combat.applySpeed(c)
 	for _, child in c.model:GetChildren() do
 		if child:IsA("Tool") then
 			child:Destroy()
@@ -178,7 +256,7 @@ local function trace(
 	for _, other in Combatants.all() do
 		if other ~= c and other.alive and other.team ~= c.team then
 			local zone: Config.Zone?, dist: number? =
-				Hitbox.cast(origin, dir, maxDist, Combatants.rewound(other, rewind))
+				Hitbox.cast(origin, dir, maxDist, Combatants.rewound(other, rewind), other.stance == "Crouch")
 			if zone and dist and dist <= victimDist then
 				victim, victimZone, victimDist = other, zone :: Config.Zone, dist
 			end
@@ -223,6 +301,9 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 	aimDir = aimDir.Unit
 
 	c.lastShot = now
+	if c.stance == "Sprint" then
+		Combat.setStance(c, "Stand") -- no shooting at full sprint
+	end
 	if c.shieldUntil > 0 then
 		Combat.dropShield(c)
 	end
@@ -305,8 +386,26 @@ function Combat.bind()
 			return
 		end
 		c.aiming = aiming
-		if c.alive then
-			c.humanoid.WalkSpeed = if aiming then Config.AimWalkSpeed else Config.WalkSpeed
+		if aiming and c.stance == "Sprint" then
+			Combat.setStance(c, "Stand")
+		end
+		Combat.applySpeed(c)
+	end)
+	Net.Stance.OnServerEvent:Connect(function(player, stance)
+		local c = Combatants.byPlayer(player)
+		if not c or not Net.allow(player, "Stance", 10, 5) then
+			return
+		end
+		if stance == "Slide" then
+			Combat.slide(c)
+		elseif stance == "DoubleJump" then
+			Combat.doubleJump(c)
+		elseif stance == "Stand" or stance == "Crouch" or stance == "Sprint" then
+			if not (stance == "Sprint" and c.aiming) then
+				Combat.setStance(c, stance)
+			end
+		else
+			AntiCheat.flag(c, "malformed Stance payload")
 		end
 	end)
 	Net.Look.OnServerEvent:Connect(function(player, dir)

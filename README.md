@@ -3,6 +3,8 @@
 A Roblox 1v1 and 2v2 military duel shooter, designed by **Noelle Moore** and dedicated to **Joanna Moore** and **Eddie Moore**.
 The full design is in `research/brief.md`. Code lives in `src/` and syncs into Roblox Studio with Rojo. Toolchain and daily loop are the same as noma-roblox: `rokit install`, `rojo serve`, and `./scripts/check.sh` prints `CHECK OK`.
 
+**Port 34873.** This game's `rojo serve` uses port 34873 (`servePort` in `default.project.json`); Stink-a-Dad in `~/orca/noma-roblox` uses 34872. In Studio's Rojo panel, set the port to **34873** before clicking Connect, or the window will receive Stink-a-Dad's code instead.
+
 ## Play it (phases 1–2)
 
 1. `rojo build default.project.json -o MilitaryDuels.rbxl`, then open the file in Roblox Studio.
