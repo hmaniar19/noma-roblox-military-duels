@@ -1,7 +1,7 @@
 --!strict
--- Pre-round loadout screen (primary + gadget; Sudden Death: sniper or knife) and the 1v1/2v2 mode
--- picker shown in the lobby and after a match. Picks go to the server, which validates them and
--- previews the real kit in your hands during the freeze.
+-- Pre-round loadout screen (primary + gadget; Sudden Death: sniper or knife). Picks go to the
+-- server, which validates them and previews the real kit in your hands during the freeze. The
+-- 1v1/2v2 choice lives on the Camp More Maniar lobby bar (Lobby.luau).
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -11,9 +11,8 @@ local Weapon = require(script.Parent.Weapon)
 
 local player = Players.LocalPlayer :: Player
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
-local state = ReplicatedStorage:WaitForChild("GameState")
+local state = require(script.Parent.ArenaState)
 local LoadoutRemote = remotes:WaitForChild("Loadout") :: RemoteEvent
-local ModeRemote = remotes:WaitForChild("Mode") :: RemoteEvent
 
 local FONT = Enum.Font.GothamBlack
 local IDLE = Color3.fromRGB(28, 34, 46)
@@ -129,11 +128,6 @@ note.TextColor3 = Color3.fromRGB(200, 205, 215)
 note.LayoutOrder = 4
 note.Parent = loadoutPanel
 
-local modePanel, modeTitle = panel("NEXT MATCH", 0.6)
-local modeRow = row(modePanel, 1, "MODE", { "1v1", "2v2" }, { ["1v1"] = "1 v 1", ["2v2"] = "2 v 2" }, function(v)
-	ModeRemote:FireServer(v)
-end)
-
 local function highlight(buttons: Row, picked: string?)
 	for value, b in buttons do
 		b.BackgroundColor3 = if value == picked then PICKED else IDLE
@@ -161,16 +155,7 @@ RunService.RenderStepped:Connect(function()
 			then "One sniper and one knife per team. You have: " .. (if held then weaponNames[held] else "...")
 			else "You always carry the Pistol (2) and the Combat Knife (3).  G throws or uses your gadget."
 	end
-	local choosingMode = phase == "Lobby" or phase == "MatchEnd" or phase == "Waiting"
-	modePanel.Visible = choosingMode
-	if choosingMode then
-		local starts = state:GetAttribute("LobbyEndsAt") or now
-		modeTitle.Text = if phase == "Lobby"
-			then `NEXT MATCH STARTS IN {math.max(0, math.ceil(starts - now))}`
-			else "NEXT MATCH"
-		highlight(modeRow, (state:GetAttribute("Mode") or "1v1") :: string)
-	end
-	Weapon.menuOpen = picking or choosingMode
+	Weapon.menuOpen = picking
 end)
 
 return {}

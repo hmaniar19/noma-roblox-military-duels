@@ -61,7 +61,7 @@ Each phase is a playable game on its own. The autoresearch loop builds one phase
 | 1 | Core duel: Shooting Range, 1v1 vs bot, assault rifle, hitboxes, first-to-5, timer and draws, server-side hit validation | 2500 |
 | 2 | Arsenal: full loadout, SMG, shotgun, sidearm, knife, smoke, frag, med kit, Sudden Death sniper/knife, 2v2 with bots | 4000 |
 | 3 | Desert Outpost and Urban Training Town, plus the 4 drop-in vehicles | 5500 |
-| 4 | Bullet cam, anime finisher, handshake draws, Camp Moore lobby, statue, dedication, HUD color picker | 7000 |
+| 4 | Bullet cam, anime finisher, handshake draws, Camp More Maniar lobby, statue, dedication, HUD color picker | 7000 |
 | 5 | Saved coins, XP and levels, payouts, beginnersluck, shop, starter pick, Double Trouble, Eddie's Honor, A Mother's Wrath, Ranked | 8500 |
 | 6 | Cheat flag thresholds, Bot Bootcamp, report replays, matchmaking queues, Remote audit | 10000 |
 

@@ -19,11 +19,10 @@ local HEAD_OFFSET = Config.Hitboxes[1].offset
 
 local Combat = {}
 
--- Set by Match.
-Combat.isLive = function(): boolean
-	return false
+-- A combatant can only fight while its own arena's round is live (several arenas run at once).
+function Combat.isLive(c: Combatant): boolean
+	return c.arena.isLive()
 end
-Combat.onElimination = function(_victim: Combatant, _attacker: Combatant?, _zone: Config.Zone?) end
 
 local rng = Random.new()
 local fxFolder = Instance.new("Folder")
@@ -162,7 +161,9 @@ function Combat.equip(c: Combatant, index: number)
 	tool.CanBeDropped = false
 	tool.ManualActivationOnly = true
 	tool.Grip = CFrame.new(0, -0.1, 0.2) * CFrame.Angles(0, math.rad(180), 0)
-	Gun.build(tool, id)
+	-- The owner's equipped skin (published by Economy); bots carry standard guns.
+	local skin = if c.player then c.player:GetAttribute("Skin_" .. id) else nil
+	Gun.build(tool, id, if typeof(skin) == "string" then skin else nil)
 	tool.Parent = c.model
 	c.humanoid:EquipTool(tool)
 	Combatants.sync(c)
@@ -222,7 +223,7 @@ function Combat.damage(target: Combatant, amount: number, attacker: Combatant, z
 	end
 	if killed then
 		target.alive = false
-		Combat.onElimination(target, attacker, zone)
+		target.arena.onElimination(target, attacker, zone)
 	end
 end
 
@@ -254,7 +255,7 @@ local function trace(
 	local victimZone: Config.Zone? = nil
 	local victimDist = maxDist
 	for _, other in Combatants.all() do
-		if other ~= c and other.alive and other.team ~= c.team then
+		if other ~= c and other.arena == c.arena and other.alive and other.team ~= c.team then
 			local zone: Config.Zone?, dist: number? =
 				Hitbox.cast(origin, dir, maxDist, Combatants.rewound(other, rewind), other.stance == "Crouch")
 			if zone and dist and dist <= victimDist then
@@ -269,7 +270,7 @@ end
 -- from the server's validated head position; the client's origin only locates the crosshair's target.
 function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 	local id = Combatants.weapon(c)
-	if not id or not c.alive or not Combat.isLive() or c.reloading or c.healingUntil > 0 then
+	if not id or not c.alive or not Combat.isLive(c) or c.reloading or c.healingUntil > 0 then
 		return
 	end
 	local w = Config.Weapons[id]

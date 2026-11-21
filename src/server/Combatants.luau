@@ -7,7 +7,17 @@ local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 
+-- What a combatant needs from the arena (map + match) it fights in. Several arenas run at once.
+export type ArenaHooks = {
+	id: string,
+	isLive: () -> boolean,
+	onElimination: (victim: any, attacker: any?, zone: Config.Zone?) -> (),
+	boundsMin: Vector3,
+	boundsMax: Vector3,
+}
+
 export type Combatant = {
+	arena: ArenaHooks,
 	name: string,
 	player: Player?,
 	team: Config.TeamId,
@@ -45,8 +55,16 @@ local SYNCED = { "Weapon", "Slots", "Ammo", "Reloading", "Gadget", "GadgetLeft",
 
 local list: { Combatant } = {}
 
-function Combatants.new(name: string, player: Player?, team: Config.TeamId, model: Model, spawn: CFrame): Combatant
+function Combatants.new(
+	arena: ArenaHooks,
+	name: string,
+	player: Player?,
+	team: Config.TeamId,
+	model: Model,
+	spawn: CFrame
+): Combatant
 	local c: Combatant = {
+		arena = arena,
 		name = name,
 		player = player,
 		team = team,
@@ -88,17 +106,21 @@ function Combatants.all(): { Combatant }
 	return list
 end
 
-function Combatants.clear()
-	for _, c in list do
-		c.alive = false
-		c.reloadToken += 1
-		if c.player then
-			for _, key in SYNCED do
-				c.player:SetAttribute(key, nil)
+-- Ends every combatant in one arena (other arenas keep fighting).
+function Combatants.clear(arena: ArenaHooks)
+	for i = #list, 1, -1 do
+		local c = list[i]
+		if c.arena == arena then
+			c.alive = false
+			c.reloadToken += 1
+			if c.player then
+				for _, key in SYNCED do
+					c.player:SetAttribute(key, nil)
+				end
 			end
+			table.remove(list, i)
 		end
 	end
-	table.clear(list)
 end
 
 function Combatants.byPlayer(player: Player): Combatant?

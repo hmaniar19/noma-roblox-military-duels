@@ -13,7 +13,7 @@ local Gun = require(ReplicatedStorage.Shared.Gun)
 
 local player = Players.LocalPlayer :: Player
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
-local state = ReplicatedStorage:WaitForChild("GameState")
+local state = require(script.Parent.ArenaState)
 local Fire = remotes:WaitForChild("Fire") :: RemoteEvent
 local Equip = remotes:WaitForChild("Equip") :: RemoteEvent
 local Gadget = remotes:WaitForChild("Gadget") :: RemoteEvent
@@ -97,7 +97,8 @@ local function refreshViewmodel(id: Config.WeaponId)
 	viewmodel:Destroy()
 	viewmodel = Instance.new("Model")
 	viewmodel.Name = "Viewmodel"
-	local handle = Gun.build(viewmodel, id)
+	local skin = player:GetAttribute("Skin_" .. id)
+	local handle = Gun.build(viewmodel, id, if typeof(skin) == "string" then skin else nil)
 	viewmodel.PrimaryPart = handle
 	viewmodel:ScaleTo(0.42)
 	-- Cosmetic only: anchored, or gravity builds velocity between PivotTo calls until the parts are destroyed.

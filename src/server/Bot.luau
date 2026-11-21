@@ -87,7 +87,7 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 
 	while c.alive and root.Parent do
 		local now = os.clock()
-		if not Combat.isLive() then
+		if not Combat.isLive(c) then
 			humanoid:Move(Vector3.zero)
 			task.wait(B.Think)
 			continue

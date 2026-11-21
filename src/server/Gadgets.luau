@@ -18,11 +18,23 @@ local BODY_OFFSET = Config.Hitboxes[2].offset
 
 local Gadgets = {}
 
-type Cloud = { center: Vector3, radius: number, ends: number }
+type Cloud = { center: Vector3, radius: number, ends: number, arena: string }
 local clouds: { Cloud } = {}
-local folder = Instance.new("Folder")
-folder.Name = "Gadgets"
-folder.Parent = workspace
+local root = Instance.new("Folder")
+root.Name = "Gadgets"
+root.Parent = workspace
+
+-- Each arena's grenades, blasts and smoke live in its own folder so a new round only clears its own.
+local function arenaFolder(id: string): Folder
+	local existing = root:FindFirstChild(id)
+	if existing then
+		return existing :: Folder
+	end
+	local f = Instance.new("Folder")
+	f.Name = id
+	f.Parent = root
+	return f
+end
 
 -- True if the segment from `a` to `b` passes through an active smoke cloud.
 function Gadgets.smokeBlocks(a: Vector3, b: Vector3): boolean
@@ -45,7 +57,7 @@ local function explode(thrower: Combatant, at: Vector3)
 	blast.BlastRadius = G.Frag.radius
 	blast.BlastPressure = 0 -- visual only; damage is computed below
 	blast.DestroyJointRadiusPercent = 0
-	blast.Parent = folder
+	blast.Parent = arenaFolder(thrower.arena.id)
 	local boom = Instance.new("Sound")
 	boom.SoundId = Config.Sounds.Explosion
 	boom.Volume = 1
@@ -56,11 +68,12 @@ local function explode(thrower: Combatant, at: Vector3)
 	boom.Parent = anchor
 	boom:Play()
 	task.delay(4, anchor.Destroy, anchor)
-	if not Combat.isLive() then
+	if not Combat.isLive(thrower) then
 		return
 	end
 	for _, target in Combatants.all() do
-		if target.alive and (target.team ~= thrower.team or target == thrower) then
+		local inArena = target.arena == thrower.arena
+		if inArena and target.alive and (target.team ~= thrower.team or target == thrower) then
 			local body = (target.root.CFrame * CFrame.new(BODY_OFFSET)).Position
 			local dist = (body - at).Magnitude
 			if dist <= G.Frag.radius and not workspace:Raycast(at, body - at, Combat.occlusion()) then
@@ -71,9 +84,10 @@ local function explode(thrower: Combatant, at: Vector3)
 	end
 end
 
-local function smoke(at: Vector3)
+local function smoke(at: Vector3, arena: string)
+	local folder = arenaFolder(arena)
 	local r = G.Smoke.radius
-	table.insert(clouds, { center = at, radius = r, ends = os.clock() + G.Smoke.duration })
+	table.insert(clouds, { center = at, radius = r, ends = os.clock() + G.Smoke.duration, arena = arena })
 	local puffs: { BasePart } = {}
 	for i = 0, 6 do
 		local angle = i * math.pi / 3
@@ -114,7 +128,7 @@ local function throw(c: Combatant, kind: Config.GadgetId, dir: Vector3)
 	local eye = Combat.headPosition(c)
 	local blocked = workspace:Raycast(eye, dir * 2.5, Combat.occlusion())
 	grenade.Position = if blocked then blocked.Position - dir * 0.6 else eye + dir * 2
-	grenade.Parent = folder
+	grenade.Parent = arenaFolder(c.arena.id)
 	grenade.AssemblyLinearVelocity = dir * spec.throwSpeed + Vector3.new(0, 12, 0)
 	task.delay(spec.fuse, function()
 		if grenade.Parent then
@@ -123,7 +137,7 @@ local function throw(c: Combatant, kind: Config.GadgetId, dir: Vector3)
 			if kind == "Frag" then
 				explode(c, at)
 			else
-				smoke(at)
+				smoke(at, c.arena.id)
 			end
 		end
 	end)
@@ -132,7 +146,7 @@ end
 -- Uses the combatant's gadget. `dir` is where to throw (ignored by the med kit).
 function Gadgets.use(c: Combatant, dir: Vector3)
 	local kind = c.gadget
-	if not kind or not c.alive or not Combat.isLive() or c.gadgetLeft <= 0 or c.healingUntil > 0 then
+	if not kind or not c.alive or not Combat.isLive(c) or c.gadgetLeft <= 0 or c.healingUntil > 0 then
 		return
 	end
 	if kind == "Medkit" then
@@ -160,10 +174,14 @@ function Gadgets.use(c: Combatant, dir: Vector3)
 	Combatants.sync(c)
 end
 
--- New round: clear grenades in flight and clouds.
-function Gadgets.reset()
-	table.clear(clouds)
-	folder:ClearAllChildren()
+-- New round in one arena: clear its grenades in flight and clouds.
+function Gadgets.reset(arena: string)
+	for i = #clouds, 1, -1 do
+		if clouds[i].arena == arena then
+			table.remove(clouds, i)
+		end
+	end
+	arenaFolder(arena):ClearAllChildren()
 end
 
 function Gadgets.bind()

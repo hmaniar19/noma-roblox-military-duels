@@ -44,7 +44,7 @@ local Config = {
 	SuddenDeathAt = 4,
 	RoundSeconds = 120,
 	FreezeSeconds = 8, -- includes picking a loadout
-	LobbySeconds = 6, -- choose 1v1 or 2v2 before each match
+	QueueSeconds = 10, -- after the first player queues for a map, others have this long to join
 	RoundEndSeconds = 4,
 	MatchEndSeconds = 8,
 	SpawnShieldSeconds = 3,
@@ -190,6 +190,75 @@ local Config = {
 		Frag = { name = "Frag Grenade", fuse = 2.2, radius = 16, maxDamage = 110, minDamage = 20, throwSpeed = 75 },
 		Smoke = { name = "Smoke Grenade", fuse = 1.2, radius = 12, duration = 12, throwSpeed = 75 },
 		Medkit = { name = "Med Kit", heal = 50, channel = 3 },
+	},
+
+	-- Coins (earned by playing only; never sold). Noelle's payout rules.
+	Payouts = {
+		WinHeadshot = 120, -- the match-winning shot was a headshot
+		WinBody = 80, -- any other win, including the opponent leaving
+		LoserPerRound = 10, -- per round the losing side won
+		BeginnersLuck = 350, -- once per account, on the very first join
+	},
+
+	-- Weapon skins bought with coins. Cosmetic only: a skin never changes a weapon's stats.
+	Skins = {
+		{ id = "Standard", name = "Standard", price = 0 },
+		{
+			id = "DesertCamo",
+			name = "Desert Camo",
+			price = 150,
+			color = Color3.fromRGB(194, 170, 120),
+			material = Enum.Material.Fabric,
+		},
+		{
+			id = "ForestCamo",
+			name = "Forest Camo",
+			price = 150,
+			color = Color3.fromRGB(74, 92, 58),
+			material = Enum.Material.Fabric,
+		},
+		{
+			id = "ArcticWhite",
+			name = "Arctic White",
+			price = 300,
+			color = Color3.fromRGB(228, 232, 236),
+			material = Enum.Material.SmoothPlastic,
+		},
+		{
+			id = "NavySteel",
+			name = "Navy Steel",
+			price = 300,
+			color = Color3.fromRGB(40, 58, 96),
+			material = Enum.Material.Metal,
+		},
+		{
+			id = "Crimson",
+			name = "Crimson",
+			price = 600,
+			color = Color3.fromRGB(150, 24, 30),
+			material = Enum.Material.SmoothPlastic,
+		},
+		{
+			id = "Midnight",
+			name = "Midnight Blue",
+			price = 600,
+			color = Color3.fromRGB(20, 28, 70),
+			material = Enum.Material.Metal,
+		},
+		{
+			id = "Gold",
+			name = "Gold",
+			price = 1000,
+			color = Color3.fromRGB(212, 170, 60),
+			material = Enum.Material.Foil,
+		},
+	} :: { { id: string, name: string, price: number, color: Color3?, material: Enum.Material? } },
+
+	-- Arenas players can queue for from the Camp More Maniar lobby, in picker order.
+	Maps = {
+		{ id = "ShootingRange", name = "Shooting Range", blurb = "Firing lanes, offices and a tall control tower." },
+		{ id = "DesertOutpost", name = "Desert Outpost", blurb = "Dunes, shipping containers and a watchtower." },
+		{ id = "UrbanTown", name = "Urban Training Town", blurb = "Streets and houses built for raid practice." },
 	},
 
 	Teams = {

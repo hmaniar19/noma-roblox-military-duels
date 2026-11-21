@@ -17,7 +17,7 @@ type Choice = { primary: WeaponId, gadget: GadgetId, role: Role? }
 
 local Loadout = {}
 
--- Set by Match: called after a player changes a pick so the change shows up during the freeze.
+-- Set by the arena registry: called after a player changes a pick so it shows during the freeze.
 Loadout.onChange = function(_player: Player) end
 
 local choices: { [Player]: Choice } = {}
@@ -68,9 +68,12 @@ function Loadout.roles(members: { Player? }, count: number): { Role }
 end
 
 -- Sudden Death role requests are per match; a stale one must not override a teammate next time.
-function Loadout.resetRoles()
-	for player, c in choices do
-		c.role = nil
+function Loadout.resetRoles(players: { Player })
+	for _, player in players do
+		local c = choices[player]
+		if c then
+			c.role = nil
+		end
 		player:SetAttribute("PickRole", nil)
 	end
 end

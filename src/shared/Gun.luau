@@ -94,14 +94,29 @@ local function piece(parent: Instance, handle: BasePart?, size: Vector3, offset:
 end
 
 -- Returns the handle (grip) with the rest of the weapon welded to it, all parented to `parent`.
--- `Muzzle` is an Attachment on the handle at the barrel tip (blade tip for the knife).
-function Gun.build(parent: Instance, id: Config.WeaponId): Part
+-- `Muzzle` is an Attachment on the handle at the barrel tip (blade tip for the knife). `skinId`
+-- recolors the body (a knife blade stays steel); skins are cosmetic only.
+function Gun.build(parent: Instance, id: Config.WeaponId, skinId: string?): Part
 	local shape = SHAPES[id]
-	local handle =
-		piece(parent, nil, Vector3.new(0.3, 0.7, 0.4), CFrame.identity, if id == "Knife" then WOOD else POLYMER)
+	local skin = nil
+	for _, s in Config.Skins do
+		if s.id == skinId and s.color then
+			skin = s
+		end
+	end
+	local function paint(part: Part, baseColor: Color3)
+		if skin and baseColor ~= STEEL then
+			part.Color = skin.color :: Color3
+			part.Material = skin.material or Enum.Material.SmoothPlastic
+		end
+	end
+	local handleColor = if id == "Knife" then WOOD else POLYMER
+	local handle = piece(parent, nil, Vector3.new(0.3, 0.7, 0.4), CFrame.identity, handleColor)
 	handle.Name = "Handle"
+	paint(handle, handleColor)
 	for _, p in shape.pieces do
 		local part = piece(parent, handle, p.size, p.at, p.color)
+		paint(part, p.color)
 		if p.name then
 			part.Name = p.name
 		end
