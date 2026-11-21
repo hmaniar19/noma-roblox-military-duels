@@ -94,8 +94,8 @@ The client never decides damage, ammo, hits, movement limits, coins, or XP.
 
 A **Report button** saves the last round's replay for review.
 
-## 8. Lobby: Camp Moore
-1. The lobby is a military-base courtyard named **Camp Moore**. It has:
+## 8. Lobby: Camp More Maniar
+1. The lobby is a military-base courtyard named **Camp More Maniar** (a play on Noelle's last name, Moore, and on her being "more Maniar"). It has:
    - A **Shooting Range**: try any weapon for free.
    - The shop.
    - A leaderboard.
