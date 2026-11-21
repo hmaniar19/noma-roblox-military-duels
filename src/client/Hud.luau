@@ -251,6 +251,26 @@ Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 		else
 			showBanner(`{Config.Teams[data.winner :: Config.TeamId].name} WINS`, how, GOLD, Config.MatchEndSeconds)
 		end
+	elseif kind == "Celebrate" then
+		-- Sweep across the celebration stage, closing in, then hand the camera back.
+		local camera = workspace.CurrentCamera
+		local focus: Vector3 = data.focus
+		local seconds: number = data.seconds
+		local started = os.clock()
+		camera.CameraType = Enum.CameraType.Scriptable
+		local sweep: RBXScriptConnection
+		sweep = RunService.RenderStepped:Connect(function()
+			local t = (os.clock() - started) / seconds
+			if t >= 1 then
+				sweep:Disconnect()
+				camera.CameraType = Enum.CameraType.Custom
+				return
+			end
+			local angle = math.rad(-40 + 80 * t)
+			local radius = 34 - 12 * t
+			local eye = focus + Vector3.new(math.sin(angle) * radius, 7 - 3 * t, math.cos(angle) * radius)
+			camera.CFrame = CFrame.lookAt(eye, focus)
+		end)
 	end
 end)
 

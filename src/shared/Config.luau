@@ -26,6 +26,7 @@ export type Weapon = {
 	spreadAim: number,
 	spreadMoving: number, -- extra degrees while moving
 	botRange: number, -- the bot closes in until it is this near
+	scoped: boolean, -- aiming looks through a scope (sniper zoom and overlay)
 }
 
 export type Zone = string -- "Head" | "Body" | "Legs" (keys of ZoneMultiplier; produced only by Hitbox.cast)
@@ -36,6 +37,7 @@ local function gun(t: { [string]: any }): Weapon
 	t.pellets = t.pellets or 1
 	t.minDamageScale = t.minDamageScale or 0.7
 	t.spreadMoving = t.spreadMoving or 1.5
+	t.scoped = t.scoped == true
 	return (t :: any) :: Weapon
 end
 
@@ -46,7 +48,7 @@ local Config = {
 	FreezeSeconds = 8, -- includes picking a loadout
 	QueueSeconds = 10, -- after the first player queues for a map, others have this long to join
 	RoundEndSeconds = 4,
-	MatchEndSeconds = 8,
+	MatchEndSeconds = 10, -- includes the match-win celebration
 	SpawnShieldSeconds = 3,
 
 	MaxHealth = 100,
@@ -146,6 +148,7 @@ local Config = {
 		Sniper = gun({
 			name = "Sniper",
 			auto = false,
+			scoped = true,
 			damage = 90, -- head x3 is a one-shot; body is two
 			falloffStart = 1000,
 			falloffEnd = 1001,
@@ -178,9 +181,9 @@ local Config = {
 		}),
 	} :: { [WeaponId]: Weapon },
 
-	-- What the pre-round screen offers. The sidearm and the knife are always carried.
+	-- What the pre-round screen offers. The sidearm is always carried; the melee defaults to the knife.
 	Loadout = {
-		Primary = { "AR", "SMG", "Shotgun" } :: { WeaponId },
+		Primary = { "AR", "SMG", "Shotgun", "Sniper" } :: { WeaponId },
 		Sidearm = "Pistol" :: WeaponId,
 		Melee = "Knife" :: WeaponId,
 		Gadget = { "Frag", "Smoke", "Medkit" } :: { GadgetId },
@@ -263,24 +266,38 @@ local Config = {
 	} :: { { id: string, name: string, price: number, color: Color3?, material: Enum.Material? } },
 
 	-- Weapons of their own bought with coins (Shop > WEAPONS). Once owned they appear in the loadout
-	-- picker for their slot. Per the brief, each has exactly the stats of the weapon it stands in for
-	-- (see the stat copies after this table), so owning one is never an advantage.
+	-- picker for their slot. Each copies the stats of its `base` weapon (see the copies after this
+	-- table), so owning one is never an advantage.
 	ShopWeapons = {
 		{
 			id = "DoubleTrouble",
+			name = "Double Trouble",
+			base = "Knife",
 			price = 1500,
 			slot = "Melee",
 			color = Color3.fromRGB(120, 10, 16),
-			blurb = "Twin dark-red swords with a glow, a red swing trail and a shing when drawn.",
+			blurb = "Twin dark katanas with glowing crimson edges, a red swing trail and a shing when drawn.",
 		},
 		{
 			id = "MothersWrath",
+			name = "A Mother's Wrath",
+			base = "Sniper",
 			price = 3000,
 			slot = "Primary",
 			color = Color3.fromRGB(16, 30, 90),
-			blurb = "Dark-blue rifle with glowing blue shots and blue lightning on every elimination.",
+			blurb = "Dark-blue sniper rifle with glowing blue shots and blue lightning on every elimination.",
 		},
-	} :: { { id: string, price: number, slot: string, color: Color3, blurb: string } },
+	} :: {
+		{
+			id: string,
+			name: string,
+			base: WeaponId,
+			price: number,
+			slot: string,
+			color: Color3,
+			blurb: string,
+		}
+	},
 
 	-- Arenas players can queue for from the Camp More Maniar lobby, in picker order.
 	Maps = {
@@ -345,12 +362,10 @@ local Config = {
 }
 
 -- Shop weapons: their own ids, names and models, but copied stats, so "same stats" can't drift.
-local function shopWeapon(base: WeaponId, name: string): Weapon
-	local w = table.clone(Config.Weapons[base])
-	w.name = name
-	return w
+for _, entry in Config.ShopWeapons do
+	local w = table.clone(Config.Weapons[entry.base])
+	w.name = entry.name
+	Config.Weapons[entry.id] = w
 end
-Config.Weapons.MothersWrath = shopWeapon("AR", "A Mother's Wrath")
-Config.Weapons.DoubleTrouble = shopWeapon("Knife", "Double Trouble")
 
 return Config

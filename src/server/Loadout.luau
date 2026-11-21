@@ -69,9 +69,15 @@ function Loadout.standard(player: Player?): Kit
 	return { weapons = { primary, Config.Loadout.Sidearm, meleeOf(player) }, gadget = gadget }
 end
 
--- The "Knife" role fights with the player's melee pick (so Double Trouble owners keep their swords).
+-- Each role fights with the player's own pick when it fits: a scoped primary (A Mother's Wrath) for
+-- the sniper, their melee (Double Trouble) for the knife role.
 function Loadout.suddenDeath(role: Role, player: Player?): Kit
-	return { weapons = { if role == "Sniper" then "Sniper" else meleeOf(player) }, gadget = nil }
+	if role ~= "Sniper" then
+		return { weapons = { meleeOf(player) }, gadget = nil }
+	end
+	local c = if player then choiceOf(player) else nil
+	local own = c and player and allowed(player, "Primary", c.primary) and Config.Weapons[c.primary].scoped
+	return { weapons = { if own and c then c.primary else "Sniper" }, gadget = nil }
 end
 
 -- One team's Sudden Death roles for `count` slots, in slot order; `members[i]` is nil for a bot.

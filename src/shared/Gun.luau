@@ -139,19 +139,19 @@ table.insert(DOUBLE_TROUBLE, P(Vector3.new(0.3, 0.7, 0.4), CFrame.new(-1.1, 0, 0
 
 local SPECIALS: { [string]: { muzzle: Vector3, handle: Color3, light: Color3, pieces: { Piece } } } = {
 	DoubleTrouble = { muzzle = DT_TIP, handle = DT_GRIP, light = DT_GLOW, pieces = DOUBLE_TROUBLE },
-	MothersWrath = {
-		muzzle = SHAPES.AR.muzzle,
+	MothersWrath = { -- a dark-blue sniper rifle
+		muzzle = SHAPES.Sniper.muzzle,
 		handle = MW_BLUE,
 		light = MW_GLOW,
 		pieces = {
-			P(Vector3.new(0.35, 0.45, 2.4), CFrame.new(0, 0.5, -0.6), MW_BLUE),
-			P(Vector3.new(0.37, 0.07, 2.0), CFrame.new(0, 0.5, -0.6), MW_GLOW),
-			P(Vector3.new(0.18, 0.18, 1.6), CFrame.new(0, 0.55, -2.5), MW_BLUE),
-			P(Vector3.new(0.24, 0.24, 0.2), CFrame.new(0, 0.55, -3.2), MW_GLOW),
-			P(Vector3.new(0.3, 0.3, 1.0), CFrame.new(0, 0.5, -1.9), MW_BLUE),
-			P(Vector3.new(0.25, 0.8, 0.45), CFrame.new(0, -0.1, -1.0), MW_BLUE, "Mag"),
-			P(Vector3.new(0.3, 0.5, 1.1), CFrame.new(0, 0.35, 1.0), MW_BLUE),
-			P(Vector3.new(0.12, 0.22, 0.6), CFrame.new(0, 0.85, -0.4), MW_GLOW),
+			P(Vector3.new(0.35, 0.45, 2.2), CFrame.new(0, 0.5, -0.5), MW_BLUE),
+			P(Vector3.new(0.37, 0.07, 1.9), CFrame.new(0, 0.5, -0.5), MW_GLOW),
+			P(Vector3.new(0.16, 0.16, 2.6), CFrame.new(0, 0.55, -3.0), MW_BLUE),
+			P(Vector3.new(0.24, 0.24, 0.2), CFrame.new(0, 0.55, -4.2), MW_GLOW),
+			P(Vector3.new(0.3, 0.3, 1.3), CFrame.new(0, 1.0, -0.6), MW_BLUE), -- scope
+			P(Vector3.new(0.24, 0.24, 0.06), CFrame.new(0, 1.0, -1.27), MW_GLOW), -- scope lens
+			P(Vector3.new(0.25, 0.55, 0.4), CFrame.new(0, -0.05, -0.6), MW_BLUE, "Mag"),
+			P(Vector3.new(0.32, 0.6, 1.3), CFrame.new(0, 0.35, 1.1), MW_BLUE),
 		},
 	},
 }

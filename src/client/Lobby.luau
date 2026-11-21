@@ -209,9 +209,8 @@ for _, skin in Config.Skins do
 		skinCount += 1
 	end
 end
-local STANDS_IN = { Primary = "AR", Melee = Config.Loadout.Melee }
 for i, w in Config.ShopWeapons do
-	local base = Config.Weapons[STANDS_IN[w.slot]].name
+	local base = Config.Weapons[w.base].name
 	local slot = string.lower(w.slot)
 	shopCard(tabs.WEAPONS, {
 		id = w.id,

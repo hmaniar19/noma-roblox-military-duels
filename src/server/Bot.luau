@@ -150,7 +150,7 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 			else
 				humanoid:Move(root.CFrame.RightVector * strafe)
 			end
-			c.aiming = w.kind == "gun" and (best > 60 or id == "Sniper")
+			c.aiming = w.kind == "gun" and (best > 60 or w.scoped)
 			humanoid.WalkSpeed = if c.aiming then Config.AimWalkSpeed else Config.WalkSpeed
 			local inReach = best <= (if w.kind == "melee" then w.range else w.botRange * 2.5)
 			if inReach and now - (seenSince :: number) >= B.ReactionTime and now >= nextShot then
@@ -167,7 +167,7 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 					* (1 + best / 120)
 					* settle
 					* running
-					* (if id == "Sniper" then B.SniperAimScale else 1)
+					* (if w.scoped then B.SniperAimScale else 1)
 				Combat.fire(c, eye, Hitbox.spread((aimAt - eye).Unit, err, rng))
 				burstLeft -= 1
 				nextShot = now + w.fireInterval + (if w.auto then 0 else 0.2)

@@ -8,6 +8,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Bot = require(script.Parent.Bot)
+local Celebration = require(script.Parent.Celebration)
 local Combat = require(script.Parent.Combat)
 local Combatants = require(script.Parent.Combatants)
 local Config = require(ReplicatedStorage.Shared.Config)
@@ -350,7 +351,26 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		state:SetAttribute("Winner", winner)
 		banner("MatchEnd", { winner = winner, navy = scores.Navy, grey = scores.Grey, forfeit = not decided })
 		payout(winner, scores, decided and lastZone == "Head")
+		-- The fight is over: the celebration stage replaces the field for everyone in the match.
+		clearField()
+		local members: { Celebration.Member } = {}
+		for _, e in roster do
+			local player = if e.player and e.player.Parent then e.player else nil
+			local kit = Loadout.standard(player)
+			table.insert(members, {
+				player = player,
+				team = e.team,
+				name = e.name,
+				primary = kit.weapons[1],
+				melee = kit.weapons[3],
+			})
+		end
+		local center = (info.boundsMin + info.boundsMax) / 2
+		local ground = Vector3.new(center.X, info.boundsMin.Y + 12, center.Z)
+		local focus, finish = Celebration.play(ground, winner, members, bots)
+		banner("Celebrate", { focus = focus, seconds = Config.MatchEndSeconds })
 		task.wait(Config.MatchEndSeconds)
+		finish()
 		clearField()
 		local leaving = roster
 		roster = {}

@@ -83,10 +83,12 @@ function Weapon.current(): (Config.WeaponId?, Config.Weapon?)
 	return id, if id then Config.Weapons[id] else nil
 end
 
+-- Fighting right now: on a team, alive, and not on the match-win celebration stage.
 function Weapon.inCombat(): boolean
 	local character = player.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	return player:GetAttribute("Team") ~= nil and humanoid ~= nil and humanoid.Health > 0
+	local onStage = player:GetAttribute("Celebrating") == true
+	return player:GetAttribute("Team") ~= nil and not onStage and humanoid ~= nil and humanoid.Health > 0
 end
 
 -- Rebuilds the first-person model when the weapon in hand changes.
@@ -420,8 +422,11 @@ local function followTeammate(camera: Camera)
 	for _, other in Players:GetPlayers() do
 		table.insert(candidates, other.Character :: any)
 	end
+	-- Bots live in a folder per arena (Bots/<ArenaId>).
 	local bots = workspace:FindFirstChild("Bots")
-	for _, bot in (if bots then bots:GetChildren() else {}) :: { Instance } do
+	local arena = player:GetAttribute("Arena")
+	local mine = if bots and typeof(arena) == "string" then bots:FindFirstChild(arena) else nil
+	for _, bot in (if mine then mine:GetChildren() else {}) :: { Instance } do
 		table.insert(candidates, bot)
 	end
 	for _, model in candidates do
@@ -469,7 +474,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 		Look:FireServer(camera.CFrame.LookVector)
 	end
 
-	local scoped = id == "Sniper" and aimBlend > 0.9
+	local scoped = w.scoped and aimBlend > 0.9
 	local reloading = player:GetAttribute("Reloading") == true
 	local healing = player:GetAttribute("Healing") == true
 	aimBlend += ((if Weapon.aiming and w.kind == "gun" and not reloading then 1 else 0) - aimBlend) * math.min(
@@ -479,7 +484,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 	recoil = math.max(recoil - dt * 6, 0)
 	swing = math.max(swing - dt * 5, 0)
 	flash.Brightness = math.max(flash.Brightness - dt * 60, 0)
-	camera.FieldOfView = 70 - (if id == "Sniper" then 50 else 20) * aimBlend
+	camera.FieldOfView = 70 - (if w.scoped then 50 else 20) * aimBlend
 	local offset = HIP:Lerp(ADS, aimBlend)
 	local kick = CFrame.new(0, 0, recoil * 0.25) * CFrame.Angles(recoil * 0.08, 0, 0)
 	local stab = CFrame.new(-0.3 * swing, 0.1 * swing, -0.9 * swing) * CFrame.Angles(0, 0, -0.6 * swing)
