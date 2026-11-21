@@ -196,6 +196,7 @@ local Config = {
 	-- (looks only, so it gives no advantage in a duel).
 	Developers = {
 		[12015477852] = "hmania10",
+		[11238400758] = "Aar0nBu44", -- Noelle, the game's designer
 	} :: { [number]: string },
 
 	-- Coins (earned by playing only; never sold). Noelle's payout rules.
