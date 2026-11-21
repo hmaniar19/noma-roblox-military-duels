@@ -204,12 +204,15 @@ function Gun.build(parent: Instance, id: Config.WeaponId, skinId: string?): Part
 		local base = Instance.new("Attachment")
 		base.Position = Vector3.new(0, 0.05, -0.4)
 		base.Parent = handle
+		-- Off until a swing: clients flash it on (Weapon.flashTrail), so moving around doesn't smear it.
 		local trail = Instance.new("Trail")
+		trail.Name = "SwingTrail"
 		trail.Attachment0, trail.Attachment1 = base, muzzle
 		trail.Color = ColorSequence.new(DT_GLOW)
 		trail.LightEmission = 1
 		trail.Lifetime = 0.18
 		trail.Transparency = NumberSequence.new(0.2, 1)
+		trail.Enabled = false
 		trail.Parent = handle
 		local draw = Instance.new("Sound")
 		draw.Name = "Draw"

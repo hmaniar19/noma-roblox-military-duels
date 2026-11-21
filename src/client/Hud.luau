@@ -348,7 +348,7 @@ RunService.RenderStepped:Connect(function()
 		slotsLabel.Text = table.concat(parts, "   ")
 		ammoText.Text = if not w
 			then ""
-			elseif w.kind == "melee" then "KNIFE"
+			elseif w.kind == "melee" then string.upper(w.name)
 			elseif player:GetAttribute("Reloading") then "RELOADING"
 			else `{player:GetAttribute("Ammo") or 0} / {w.magazine}`
 		local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?

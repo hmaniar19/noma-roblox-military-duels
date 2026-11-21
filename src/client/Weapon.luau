@@ -206,6 +206,17 @@ local function setAiming(on: boolean)
 	end
 end
 
+-- Shows a blade's swing trail (Double Trouble) for the length of one swing.
+local function flashTrail(handle: Instance?)
+	local trail = handle and handle:FindFirstChild("SwingTrail")
+	if trail and trail:IsA("Trail") then
+		trail.Enabled = true
+		task.delay(0.3, function()
+			trail.Enabled = false
+		end)
+	end
+end
+
 local function tryFire()
 	local _, w = Weapon.current()
 	local now = os.clock()
@@ -231,6 +242,7 @@ local function tryFire()
 	Fire:FireServer(camera.CFrame.Position, camera.CFrame.LookVector)
 	if w.kind == "melee" then
 		swing = 1
+		flashTrail(viewmodel:FindFirstChild("Handle"))
 		sound(Config.Sounds.Slash, camera, 0.5)
 	else
 		recoil = math.min(recoil + (if w.pellets > 1 or not w.auto then 1 else 0.35), 1.6)
@@ -301,6 +313,9 @@ ShotFx.OnClientEvent:Connect(
 		end
 		if handle then
 			sound(if melee then Config.Sounds.Slash else Config.Sounds.Shot, handle, 0.8)
+			if melee then
+				flashTrail(handle)
+			end
 		end
 		local m = handle and handle:FindFirstChild("Muzzle")
 		if not melee then
