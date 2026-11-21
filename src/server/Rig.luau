@@ -42,14 +42,15 @@ local function normalized(source: HumanoidDescription?): HumanoidDescription
 	return desc
 end
 
-local function playerDescription(player: Player): HumanoidDescription
-	local cached = descriptions[player.UserId]
+-- Anyone's avatar by user id (players, and the friends bots dress up as), cached for the session.
+local function avatarDescription(userId: number): HumanoidDescription
+	local cached = descriptions[userId]
 	if cached then
 		return cached
 	end
-	local ok, desc = pcall(Players.GetHumanoidDescriptionFromUserId, Players, math.max(player.UserId, 1))
+	local ok, desc = pcall(Players.GetHumanoidDescriptionFromUserId, Players, math.max(userId, 1))
 	local result = normalized(if ok then desc else nil)
-	descriptions[player.UserId] = result
+	descriptions[userId] = result
 	return result
 end
 
@@ -113,7 +114,7 @@ end
 
 -- Spawns the player's standardized, team-colored character at `cf`. Yields; returns nil if they left.
 function Rig.spawnPlayer(player: Player, team: Config.TeamId, cf: CFrame): Model?
-	local desc = teamDescription(playerDescription(player), team)
+	local desc = teamDescription(avatarDescription(player.UserId), team)
 	if not player:IsDescendantOf(Players) then
 		return nil
 	end
@@ -127,9 +128,16 @@ function Rig.spawnPlayer(player: Player, team: Config.TeamId, cf: CFrame): Model
 	return model
 end
 
-function Rig.spawnBot(team: Config.TeamId, name: string, cf: CFrame, parent: Instance): Model
-	local base = normalized(nil)
-	base.HeadColor = Color3.fromRGB(204, 142, 105)
+-- A bot in team uniform. With `userId` it wears that user's avatar (a player's friend); otherwise a
+-- standard blocky recruit.
+function Rig.spawnBot(team: Config.TeamId, name: string, cf: CFrame, parent: Instance, userId: number?): Model
+	local base: HumanoidDescription
+	if userId then
+		base = avatarDescription(userId)
+	else
+		base = normalized(nil)
+		base.HeadColor = Color3.fromRGB(204, 142, 105)
+	end
 	local model = Players:CreateHumanoidModelFromDescription(teamDescription(base, team), Enum.HumanoidRigType.R15)
 	model.Name = name
 	local regen = model:FindFirstChild("Health")

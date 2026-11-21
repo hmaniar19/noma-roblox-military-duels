@@ -10,7 +10,14 @@ local Config = require(ReplicatedStorage.Shared.Config)
 local Gun = require(ReplicatedStorage.Shared.Gun)
 local Rig = require(script.Parent.Rig)
 
-export type Member = { player: Player?, team: Config.TeamId, name: string, primary: string, melee: string }
+export type Member = {
+	player: Player?,
+	team: Config.TeamId,
+	name: string,
+	userId: number?, -- a bot's friend avatar
+	primary: string,
+	melee: string,
+}
 
 local Celebration = {}
 
@@ -148,7 +155,7 @@ function Celebration.play(
 				m.player.CameraMode = Enum.CameraMode.Classic
 				model = Rig.spawnPlayer(m.player, m.team, cf)
 			else
-				model = Rig.spawnBot(m.team, m.name, cf, botsFolder)
+				model = Rig.spawnBot(m.team, m.name, cf, botsFolder, m.userId)
 			end
 		end)
 		if model then

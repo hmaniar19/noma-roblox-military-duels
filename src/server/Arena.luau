@@ -13,6 +13,7 @@ local Combat = require(script.Parent.Combat)
 local Combatants = require(script.Parent.Combatants)
 local Config = require(ReplicatedStorage.Shared.Config)
 local Economy = require(script.Parent.Economy)
+local Friends = require(script.Parent.Friends)
 local Gadgets = require(script.Parent.Gadgets)
 local Loadout = require(script.Parent.Loadout)
 local MapKit = require(script.Parent.Maps.MapKit)
@@ -21,7 +22,8 @@ local Rig = require(script.Parent.Rig)
 
 type Combatant = Combatants.Combatant
 type TeamId = Config.TeamId
-type Entry = { player: Player?, team: TeamId, name: string, combatant: Combatant? }
+-- `userId` on a bot entry: the friend whose avatar and name the bot wears.
+type Entry = { player: Player?, team: TeamId, name: string, combatant: Combatant?, userId: number? }
 type Result = TeamId | "Draw"
 type Scores = { Navy: number, Grey: number }
 
@@ -173,7 +175,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				entry.player:SetAttribute("Team", entry.team)
 				model = Rig.spawnPlayer(entry.player, entry.team, cf)
 			else
-				model = Rig.spawnBot(entry.team, entry.name, cf, bots)
+				model = Rig.spawnBot(entry.team, entry.name, cf, bots, entry.userId)
 			end
 		end)
 		if not ok then
@@ -361,6 +363,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				player = player,
 				team = e.team,
 				name = e.name,
+				userId = e.userId,
 				primary = kit.weapons[1],
 				melee = kit.weapons[3],
 			})
@@ -403,18 +406,28 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		end
 		roster = {}
 		local botNumber = 0
+		local humans: { Player } = {}
+		local botEntries: { Entry } = {}
 		for i = 1, perTeam * 2 do
 			local team: TeamId = if i % 2 == 1 then "Navy" else "Grey"
 			local player = table.remove(queue, 1)
 			if player then
 				player:SetAttribute("Queued", nil)
 				player:SetAttribute("Arena", id)
+				table.insert(humans, player)
 				table.insert(roster, { player = player, team = team, name = player.DisplayName } :: Entry)
 			else
 				botNumber += 1
 				local name = if perTeam == 1 then Config.Bot.Name else `{Config.Bot.Name} {botNumber}`
-				table.insert(roster, { player = nil, team = team, name = name } :: Entry)
+				local entry: Entry = { player = nil, team = team, name = name }
+				table.insert(roster, entry)
+				table.insert(botEntries, entry)
 			end
+		end
+		-- Bots wear the avatars and names of the players' friends, so it feels like a real opponent.
+		for i, friend in Friends.pick(humans, #botEntries) do
+			botEntries[i].userId = friend.userId
+			botEntries[i].name = friend.name
 		end
 		setQueued()
 		return true
