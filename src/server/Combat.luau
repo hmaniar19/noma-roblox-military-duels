@@ -160,7 +160,7 @@ function Combat.equip(c: Combatant, index: number)
 	tool.Name = Config.Weapons[id].name
 	tool.CanBeDropped = false
 	tool.ManualActivationOnly = true
-	tool.Grip = CFrame.new(0, -0.1, 0.2) * CFrame.Angles(0, math.rad(180), 0)
+	tool.Grip = Gun.Grip
 	-- The owner's equipped skin (published by Economy); bots carry standard guns.
 	local skin = if c.player then c.player:GetAttribute("Skin_" .. id) else nil
 	local handle = Gun.build(tool, id, if typeof(skin) == "string" then skin else nil)

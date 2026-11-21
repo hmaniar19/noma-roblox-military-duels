@@ -75,7 +75,7 @@ local function equip(model: Model, id: string)
 	local tool = Instance.new("Tool")
 	tool.Name = Config.Weapons[id].name
 	tool.CanBeDropped = false
-	tool.Grip = CFrame.new(0, -0.1, 0.2) * CFrame.Angles(0, math.rad(180), 0)
+	tool.Grip = Gun.Grip
 	Gun.build(tool, id)
 	tool.Parent = model
 	local humanoid = model:FindFirstChildOfClass("Humanoid")

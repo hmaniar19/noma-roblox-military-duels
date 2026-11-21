@@ -5,6 +5,11 @@ local Config = require(script.Parent.Config)
 
 local Gun = {}
 
+-- Tool.Grip for weapons held in third person. The hand's grip attachment faces forward along the
+-- arm, so no turn is needed for the barrel (-Z) to point forward; the offset seats the grip in the
+-- palm (same seat as before the barrel was flipped forward).
+Gun.Grip = CFrame.new(0, -0.1, -0.2)
+
 local METAL = Color3.fromRGB(38, 40, 44)
 local POLYMER = Color3.fromRGB(70, 66, 56)
 local WOOD = Color3.fromRGB(110, 72, 44)
