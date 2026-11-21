@@ -192,6 +192,12 @@ local Config = {
 		Medkit = { name = "Med Kit", heal = 50, channel = 3 },
 	},
 
+	-- Roblox user ids of the game's developers. They own every skin and special weapon for free
+	-- (looks only, so it gives no advantage in a duel).
+	Developers = {
+		[12015477852] = "hmania10",
+	} :: { [number]: string },
+
 	-- Coins (earned by playing only; never sold). Noelle's payout rules.
 	Payouts = {
 		WinHeadshot = 120, -- the match-winning shot was a headshot

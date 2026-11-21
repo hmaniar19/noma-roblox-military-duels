@@ -34,14 +34,20 @@ local function key(player: Player): string
 	return `player_{player.UserId}`
 end
 
+-- Developers own the whole catalog without spending coins; everyone else owns what they bought.
+local function owns(player: Player, p: Profile, id: string): boolean
+	return p.owned[id] == true or (Config.Developers[player.UserId] ~= nil and SKINS[id] ~= nil)
+end
+
 -- Mirrors the profile onto read-only player attributes for the HUD, shop and inventory.
 local function publish(player: Player, p: Profile)
 	player:SetAttribute("Coins", p.coins)
 	local owned = {}
-	for id in p.owned do
-		table.insert(owned, id)
+	for _, s in Config.Skins do
+		if owns(player, p, s.id) then
+			table.insert(owned, s.id)
+		end
 	end
-	table.sort(owned)
 	player:SetAttribute("OwnedSkins", table.concat(owned, ","))
 	for weapon in Config.Weapons do
 		player:SetAttribute("Skin_" .. weapon, p.equipped[weapon] or "Standard")
@@ -136,7 +142,7 @@ function Economy.bind()
 		end
 		if action == "Buy" and typeof(a) == "string" and SKINS[a] then
 			local skin = SKINS[a]
-			if p.owned[a] then
+			if owns(player, p, a) then
 				return
 			end
 			if p.coins < skin.price then
@@ -153,7 +159,7 @@ function Economy.bind()
 			and typeof(a) == "string"
 			and Config.Weapons[a]
 			and typeof(b) == "string"
-			and p.owned[b]
+			and owns(player, p, b)
 			and SKINS[b]
 			and (SKINS[b].weapon == nil or SKINS[b].weapon == a) -- a special weapon fits only its own slot
 		then
