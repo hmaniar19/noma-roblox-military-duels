@@ -261,8 +261,7 @@ function Combat.damage(target: Combatant, amount: number, attacker: Combatant, z
 	end
 	if killed then
 		target.alive = false
-		local weapon = Combatants.weapon(attacker)
-		if attacker.player and weapon and attacker.player:GetAttribute("Skin_" .. weapon) == "MothersWrath" then
+		if Combatants.weapon(attacker) == "MothersWrath" then
 			wrathStrike(target.root.Position)
 		end
 		target.arena.onElimination(target, attacker, zone)

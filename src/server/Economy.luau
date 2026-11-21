@@ -25,9 +25,14 @@ local profiles: { [Player]: Profile } = {}
 local loaded: { [Player]: boolean } = {}
 local warnedNoSave = false
 
-local SKINS: { [string]: { id: string, name: string, price: number, weapon: string? } } = {}
+-- Everything coins can buy: skins and shop weapons, by id.
+type Item = { name: string, price: number, weapon: boolean }
+local CATALOG: { [string]: Item } = {}
 for _, s in Config.Skins do
-	SKINS[s.id] = s
+	CATALOG[s.id] = { name = s.name, price = s.price, weapon = false }
+end
+for _, w in Config.ShopWeapons do
+	CATALOG[w.id] = { name = Config.Weapons[w.id].name, price = w.price, weapon = true }
 end
 
 local function key(player: Player): string
@@ -36,19 +41,17 @@ end
 
 -- Developers own the whole catalog without spending coins; everyone else owns what they bought.
 local function owns(player: Player, p: Profile, id: string): boolean
-	return p.owned[id] == true or (Config.Developers[player.UserId] ~= nil and SKINS[id] ~= nil)
+	return p.owned[id] == true or (Config.Developers[player.UserId] ~= nil and CATALOG[id] ~= nil)
 end
 
--- Mirrors the profile onto read-only player attributes for the HUD, shop and inventory.
+-- Mirrors the profile onto read-only player attributes for the HUD, shop and inventory. Ownership
+-- is one boolean per item ("Owns_<id>"): attribute strings are capped at 50 characters, so a list
+-- of everything someone owns doesn't fit in one.
 local function publish(player: Player, p: Profile)
 	player:SetAttribute("Coins", p.coins)
-	local owned = {}
-	for _, s in Config.Skins do
-		if owns(player, p, s.id) then
-			table.insert(owned, s.id)
-		end
+	for id in CATALOG do
+		player:SetAttribute("Owns_" .. id, if owns(player, p, id) then true else nil)
 	end
-	player:SetAttribute("OwnedSkins", table.concat(owned, ","))
 	for weapon in Config.Weapons do
 		player:SetAttribute("Skin_" .. weapon, p.equipped[weapon] or "Standard")
 	end
@@ -140,19 +143,20 @@ function Economy.bind()
 		if not p or not Net.allow(player, "Shop", 4, 4) then
 			return
 		end
-		if action == "Buy" and typeof(a) == "string" and SKINS[a] then
-			local skin = SKINS[a]
+		if action == "Buy" and typeof(a) == "string" and CATALOG[a] then
+			local item = CATALOG[a]
 			if owns(player, p, a) then
 				return
 			end
-			if p.coins < skin.price then
-				Net.Toast:FireClient(player, "Not enough coins", `{skin.name} costs {skin.price}`)
+			if p.coins < item.price then
+				Net.Toast:FireClient(player, "Not enough coins", `{item.name} costs {item.price}`)
 				return
 			end
-			p.coins -= skin.price
+			p.coins -= item.price
 			p.owned[a] = true
 			publish(player, p)
-			Net.Toast:FireClient(player, "Unlocked!", `{skin.name}. Equip it in your Inventory.`)
+			local how = if item.weapon then "Pick it on the loadout screen." else "Equip it in your Inventory."
+			Net.Toast:FireClient(player, "Unlocked!", `{item.name}. {how}`)
 			save(player)
 		elseif
 			action == "Equip"
@@ -160,8 +164,8 @@ function Economy.bind()
 			and Config.Weapons[a]
 			and typeof(b) == "string"
 			and owns(player, p, b)
-			and SKINS[b]
-			and (SKINS[b].weapon == nil or SKINS[b].weapon == a) -- a special weapon fits only its own slot
+			and CATALOG[b]
+			and not CATALOG[b].weapon
 		then
 			p.equipped[a] = b
 			publish(player, p)

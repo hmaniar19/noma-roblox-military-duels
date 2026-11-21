@@ -157,7 +157,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				local c = e.combatant :: Combatant
 				-- Bots roll their loadout once per round; Sudden Death roles can still shift with picks.
 				if e.player or sudden or #c.weapons == 0 then
-					local kit = if sudden then Loadout.suddenDeath(roles[i]) else Loadout.standard(e.player)
+					local kit = if sudden then Loadout.suddenDeath(roles[i], e.player) else Loadout.standard(e.player)
 					Combat.arm(c, kit.weapons, kit.gadget)
 				end
 			end

@@ -207,9 +207,8 @@ local Config = {
 		BeginnersLuck = 350, -- once per account, on the very first join
 	},
 
-	-- Weapon skins bought with coins. Cosmetic only: a skin never changes a weapon's stats. Entries
-	-- with `weapon` are special weapons (Shop > WEAPONS): a whole new look for that one weapon, with
-	-- exactly its stats. `color` is the swatch shown in the shop and inventory.
+	-- Weapon skins bought with coins. Cosmetic only: a skin never changes a weapon's stats. `color`
+	-- is the swatch shown in the shop and inventory.
 	Skins = {
 		{ id = "Standard", name = "Standard", price = 0 },
 		{
@@ -261,33 +260,27 @@ local Config = {
 			color = Color3.fromRGB(212, 170, 60),
 			material = Enum.Material.Foil,
 		},
+	} :: { { id: string, name: string, price: number, color: Color3?, material: Enum.Material? } },
+
+	-- Weapons of their own bought with coins (Shop > WEAPONS). Once owned they appear in the loadout
+	-- picker for their slot. Per the brief, each has exactly the stats of the weapon it stands in for
+	-- (see the stat copies after this table), so owning one is never an advantage.
+	ShopWeapons = {
 		{
 			id = "DoubleTrouble",
-			name = "Double Trouble",
 			price = 1500,
-			weapon = "Knife",
+			slot = "Melee",
 			color = Color3.fromRGB(120, 10, 16),
 			blurb = "Twin dark-red swords with a glow, a red swing trail and a shing when drawn.",
 		},
 		{
 			id = "MothersWrath",
-			name = "A Mother's Wrath",
 			price = 3000,
-			weapon = "AR",
+			slot = "Primary",
 			color = Color3.fromRGB(16, 30, 90),
 			blurb = "Dark-blue rifle with glowing blue shots and blue lightning on every elimination.",
 		},
-	} :: {
-		{
-			id: string,
-			name: string,
-			price: number,
-			color: Color3?,
-			material: Enum.Material?,
-			weapon: string?,
-			blurb: string?,
-		}
-	},
+	} :: { { id: string, price: number, slot: string, color: Color3, blurb: string } },
 
 	-- Arenas players can queue for from the Camp More Maniar lobby, in picker order.
 	Maps = {
@@ -350,5 +343,14 @@ local Config = {
 		Explosion = "rbxasset://sounds/impact_explosion_03.mp3",
 	},
 }
+
+-- Shop weapons: their own ids, names and models, but copied stats, so "same stats" can't drift.
+local function shopWeapon(base: WeaponId, name: string): Weapon
+	local w = table.clone(Config.Weapons[base])
+	w.name = name
+	return w
+end
+Config.Weapons.MothersWrath = shopWeapon("AR", "A Mother's Wrath")
+Config.Weapons.DoubleTrouble = shopWeapon("Knife", "Double Trouble")
 
 return Config
