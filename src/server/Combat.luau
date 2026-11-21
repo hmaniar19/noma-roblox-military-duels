@@ -163,9 +163,13 @@ function Combat.equip(c: Combatant, index: number)
 	tool.Grip = CFrame.new(0, -0.1, 0.2) * CFrame.Angles(0, math.rad(180), 0)
 	-- The owner's equipped skin (published by Economy); bots carry standard guns.
 	local skin = if c.player then c.player:GetAttribute("Skin_" .. id) else nil
-	Gun.build(tool, id, if typeof(skin) == "string" then skin else nil)
+	local handle = Gun.build(tool, id, if typeof(skin) == "string" then skin else nil)
 	tool.Parent = c.model
 	c.humanoid:EquipTool(tool)
+	local draw = handle:FindFirstChild("Draw")
+	if draw and draw:IsA("Sound") then
+		draw:Play() -- Double Trouble's shing
+	end
 	Combatants.sync(c)
 end
 
@@ -204,6 +208,40 @@ function Combat.reload(c: Combatant)
 	end)
 end
 
+-- A Mother's Wrath elimination: a jagged blue lightning bolt strikes the target from the sky.
+local function wrathStrike(at: Vector3)
+	local points = { at + Vector3.new(0, 60, 0) }
+	for i = 1, 7 do
+		local y = 60 - i * 60 / 8
+		table.insert(points, at + Vector3.new(rng:NextNumber(-3, 3), y, rng:NextNumber(-3, 3)))
+	end
+	table.insert(points, at)
+	for i = 1, #points - 1 do
+		local a, b = points[i], points[i + 1]
+		local bolt = Instance.new("Part")
+		bolt.Anchored, bolt.CanCollide, bolt.CanQuery, bolt.CanTouch, bolt.CastShadow = true, false, false, false, false
+		bolt.Material = Enum.Material.Neon
+		bolt.Color = Color3.fromRGB(110, 180, 255)
+		bolt.Size = Vector3.new(0.5, 0.5, (b - a).Magnitude)
+		bolt.CFrame = CFrame.lookAt((a + b) / 2, b)
+		bolt.Parent = fxFolder
+		task.delay(0.5, bolt.Destroy, bolt)
+	end
+	local glow = Instance.new("Part")
+	glow.Anchored, glow.CanCollide, glow.CanQuery, glow.CanTouch = true, false, false, false
+	glow.Shape = Enum.PartType.Ball
+	glow.Material = Enum.Material.Neon
+	glow.Color = Color3.fromRGB(70, 150, 255)
+	glow.Transparency = 0.4
+	glow.Size = Vector3.new(7, 7, 7)
+	glow.Position = at
+	local light = Instance.new("PointLight")
+	light.Color, light.Brightness, light.Range = Color3.fromRGB(110, 180, 255), 8, 30
+	light.Parent = glow
+	glow.Parent = fxFolder
+	task.delay(0.5, glow.Destroy, glow)
+end
+
 function Combat.damage(target: Combatant, amount: number, attacker: Combatant, zone: Config.Zone)
 	if not target.alive or os.clock() < target.shieldUntil then
 		return
@@ -223,6 +261,10 @@ function Combat.damage(target: Combatant, amount: number, attacker: Combatant, z
 	end
 	if killed then
 		target.alive = false
+		local weapon = Combatants.weapon(attacker)
+		if attacker.player and weapon and attacker.player:GetAttribute("Skin_" .. weapon) == "MothersWrath" then
+			wrathStrike(target.root.Position)
+		end
 		target.arena.onElimination(target, attacker, zone)
 	end
 end

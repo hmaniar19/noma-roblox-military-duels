@@ -251,7 +251,8 @@ local function hideTool()
 	end
 end
 
-local function tracer(from: Vector3, to: Vector3, hitWall: boolean)
+-- `color` comes from a special weapon's "Tracer" attribute (A Mother's Wrath fires blue shots).
+local function tracer(from: Vector3, to: Vector3, hitWall: boolean, color: any)
 	local length = (to - from).Magnitude
 	if length < 0.5 then
 		return
@@ -259,8 +260,8 @@ local function tracer(from: Vector3, to: Vector3, hitWall: boolean)
 	local p = Instance.new("Part")
 	p.Anchored, p.CanCollide, p.CanQuery, p.CanTouch, p.CastShadow = true, false, false, false, false
 	p.Material = Enum.Material.Neon
-	p.Color = Color3.fromRGB(255, 214, 120)
-	p.Size = Vector3.new(0.07, 0.07, length)
+	p.Color = if typeof(color) == "Color3" then color else Color3.fromRGB(255, 214, 120)
+	p.Size = if typeof(color) == "Color3" then Vector3.new(0.14, 0.14, length) else Vector3.new(0.07, 0.07, length)
 	p.CFrame = CFrame.lookAt((from + to) / 2, to)
 	p.Parent = fxFolder
 	TweenService:Create(p, TweenInfo.new(0.08), { Transparency = 1 }):Play()
@@ -294,7 +295,7 @@ ShotFx.OnClientEvent:Connect(
 		local handle = tool and tool:FindFirstChild("Handle")
 		if shooter == player.Character then
 			if not melee and muzzle then
-				tracer(muzzle.WorldPosition, hitPos, hitWall)
+				tracer(muzzle.WorldPosition, hitPos, hitWall, (muzzle.Parent :: Instance):GetAttribute("Tracer"))
 			end
 			return
 		end
@@ -303,7 +304,8 @@ ShotFx.OnClientEvent:Connect(
 		end
 		local m = handle and handle:FindFirstChild("Muzzle")
 		if not melee then
-			tracer(if m and m:IsA("Attachment") then m.WorldPosition else origin, hitPos, hitWall)
+			local from = if m and m:IsA("Attachment") then m.WorldPosition else origin
+			tracer(from, hitPos, hitWall, handle and handle:GetAttribute("Tracer"))
 		end
 	end
 )

@@ -135,7 +135,7 @@ local function ownedSet(): { [string]: boolean }
 end
 
 local function modal(title: string): Frame
-	local f = frame(gui, UDim2.fromOffset(760, 430), UDim2.fromScale(0.5, 0.42), Vector2.new(0.5, 0.5))
+	local f = frame(gui, UDim2.fromOffset(840, 480), UDim2.fromScale(0.5, 0.42), Vector2.new(0.5, 0.5))
 	f.Visible = false
 	label(f, UDim2.new(1, -60, 0, 40), UDim2.fromOffset(16, 8), 24).Text = title
 	button(f, UDim2.fromOffset(36, 36), UDim2.new(1, -46, 0, 10), "X", function()
@@ -144,24 +144,66 @@ local function modal(title: string): Frame
 	return f
 end
 
-shopPanel = modal("SHOP  ·  weapon skins (looks only, earned with coins)")
+-- One shop card: swatch, name, optional description, price and a BUY button.
 local shopCards: { [string]: TextButton } = {}
-for i, skin in Config.Skins do
-	if skin.price > 0 then
-		local x, y = (i - 2) % 4, (i - 2) // 4
-		local card = frame(shopPanel, UDim2.fromOffset(172, 170), UDim2.fromOffset(16 + x * 184, 60 + y * 182))
-		card.BackgroundColor3 = IDLE
-		card.BackgroundTransparency = 0
-		frame(card, UDim2.new(1, -20, 0, 60), UDim2.fromOffset(10, 10), nil, skin.color)
-		label(card, UDim2.new(1, -12, 0, 26), UDim2.fromOffset(6, 76), 16).Text = skin.name
-		label(card, UDim2.new(1, -12, 0, 20), UDim2.fromOffset(6, 100), 15, BODY).Text = `{skin.price} coins`
-		shopCards[skin.id] = button(card, UDim2.new(1, -20, 0, 34), UDim2.fromOffset(10, 126), "BUY", function()
-			ShopRemote:FireServer("Buy", skin.id)
-		end)
+local function shopCard(parent: Instance, skin: any, size: Vector2, pos: Vector2)
+	local card = frame(parent, UDim2.fromOffset(size.X, size.Y), UDim2.fromOffset(pos.X, pos.Y))
+	card.BackgroundColor3 = IDLE
+	card.BackgroundTransparency = 0
+	frame(card, UDim2.new(1, -20, 0, 60), UDim2.fromOffset(10, 10), nil, skin.color)
+	label(card, UDim2.new(1, -12, 0, 26), UDim2.fromOffset(6, 76), 16).Text = string.upper(skin.name)
+	local y = 102
+	if skin.weapon then
+		local about = label(card, UDim2.new(1, -20, 0, 70), UDim2.fromOffset(10, y), 15, BODY)
+		about.Text = `{skin.blurb}\nReplaces your {Config.Weapons[skin.weapon].name}. Same stats.`
+		y += 78
+	end
+	label(card, UDim2.new(1, -12, 0, 20), UDim2.fromOffset(6, y), 15, BODY).Text = `{skin.price} coins`
+	shopCards[skin.id] = button(card, UDim2.new(1, -20, 0, 34), UDim2.fromOffset(10, size.Y - 44), "BUY", function()
+		ShopRemote:FireServer("Buy", skin.id)
+	end)
+end
+
+shopPanel = modal("SHOP  ·  earned with coins, looks only")
+local tabs: { [string]: Frame } = {}
+local tabButtons: { [string]: TextButton } = {}
+local function showTab(name: string)
+	for id, f in tabs do
+		f.Visible = id == name
+		tabButtons[id].BackgroundColor3 = if id == name then PICKED else IDLE
+		tabButtons[id].TextColor3 = if id == name then Color3.fromRGB(20, 20, 20) else Color3.new(1, 1, 1)
+	end
+end
+for i, name in { "SKINS", "WEAPONS" } do
+	local tab = Instance.new("Frame")
+	tab.Size, tab.Position = UDim2.new(1, 0, 1, -100), UDim2.fromOffset(0, 100)
+	tab.BackgroundTransparency = 1
+	tab.Parent = shopPanel
+	tabs[name] = tab
+	tabButtons[name] = button(
+		shopPanel,
+		UDim2.fromOffset(140, 36),
+		UDim2.fromOffset(16 + (i - 1) * 150, 54),
+		name,
+		function()
+			showTab(name)
+		end
+	)
+end
+showTab("SKINS")
+local skinCount, weaponCount = 0, 0
+for _, skin in Config.Skins do
+	if skin.price > 0 and not skin.weapon then
+		local x, y = skinCount % 4, skinCount // 4
+		shopCard(tabs.SKINS, skin, Vector2.new(190, 170), Vector2.new(16 + x * 204, y * 182))
+		skinCount += 1
+	elseif skin.weapon then
+		shopCard(tabs.WEAPONS, skin, Vector2.new(394, 300), Vector2.new(16 + weaponCount * 408, 0))
+		weaponCount += 1
 	end
 end
 
-inventoryPanel = modal("INVENTORY  ·  pick a skin for each weapon")
+inventoryPanel = modal("INVENTORY  ·  pick a look for each weapon")
 local swatches: { [string]: { [string]: TextButton } } = {}
 for row, weapon in WEAPON_ORDER do
 	local y = 56 + (row - 1) * 60
@@ -169,18 +211,16 @@ for row, weapon in WEAPON_ORDER do
 	name.Text = string.upper(Config.Weapons[weapon].name)
 	name.TextXAlignment = Enum.TextXAlignment.Left
 	swatches[weapon] = {}
-	for i, skin in Config.Skins do
-		local b = button(
-			inventoryPanel,
-			UDim2.fromOffset(62, 46),
-			UDim2.fromOffset(170 + (i - 1) * 70, y + 2),
-			"",
-			function()
-				ShopRemote:FireServer("Equip", weapon, skin.id)
-			end
-		)
+	for _, skin in Config.Skins do
+		if skin.weapon and skin.weapon ~= weapon then
+			continue -- a special weapon only fits its own slot
+		end
+		local b = button(inventoryPanel, UDim2.fromOffset(62, 46), UDim2.fromOffset(170, y + 2), "", function()
+			ShopRemote:FireServer("Equip", weapon, skin.id)
+		end)
 		b.BackgroundColor3 = skin.color or Color3.fromRGB(70, 72, 70)
 		b.TextSize = 11
+		b.Text = if skin.id == "Standard" then "STD" elseif skin.weapon then "★" else ""
 		local stroke = Instance.new("UIStroke")
 		stroke.Thickness = 3
 		stroke.Color = PICKED
@@ -262,12 +302,20 @@ RunService.RenderStepped:Connect(function()
 				b.BackgroundColor3 = if owned[skin.id] then IDLE elseif wallet < skin.price then IDLE else GO
 			end
 		end
+		-- Owned looks only, packed left in catalog order.
 		for weapon, row in swatches do
 			local equipped = player:GetAttribute("Skin_" .. weapon) or "Standard"
-			for id, b in row do
-				b.Visible = owned[id] == true
-				b.Text = if id == "Standard" then "STD" else ""
-				(b:FindFirstChildOfClass("UIStroke") :: UIStroke).Enabled = id == equipped
+			local column = 0
+			for _, skin in Config.Skins do
+				local b = row[skin.id]
+				if b then
+					b.Visible = owned[skin.id] == true
+					if b.Visible then
+						b.Position = UDim2.fromOffset(170 + column * 70, b.Position.Y.Offset)
+						column += 1
+					end
+					(b:FindFirstChildOfClass("UIStroke") :: UIStroke).Enabled = skin.id == equipped
+				end
 			end
 		end
 	end

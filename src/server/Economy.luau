@@ -25,7 +25,7 @@ local profiles: { [Player]: Profile } = {}
 local loaded: { [Player]: boolean } = {}
 local warnedNoSave = false
 
-local SKINS: { [string]: { id: string, name: string, price: number } } = {}
+local SKINS: { [string]: { id: string, name: string, price: number, weapon: string? } } = {}
 for _, s in Config.Skins do
 	SKINS[s.id] = s
 end
@@ -146,7 +146,7 @@ function Economy.bind()
 			p.coins -= skin.price
 			p.owned[a] = true
 			publish(player, p)
-			Net.Toast:FireClient(player, "Unlocked!", `{skin.name} skin. Equip it in your Inventory.`)
+			Net.Toast:FireClient(player, "Unlocked!", `{skin.name}. Equip it in your Inventory.`)
 			save(player)
 		elseif
 			action == "Equip"
@@ -154,6 +154,8 @@ function Economy.bind()
 			and Config.Weapons[a]
 			and typeof(b) == "string"
 			and p.owned[b]
+			and SKINS[b]
+			and (SKINS[b].weapon == nil or SKINS[b].weapon == a) -- a special weapon fits only its own slot
 		then
 			p.equipped[a] = b
 			publish(player, p)

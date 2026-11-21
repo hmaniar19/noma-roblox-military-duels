@@ -200,7 +200,9 @@ local Config = {
 		BeginnersLuck = 350, -- once per account, on the very first join
 	},
 
-	-- Weapon skins bought with coins. Cosmetic only: a skin never changes a weapon's stats.
+	-- Weapon skins bought with coins. Cosmetic only: a skin never changes a weapon's stats. Entries
+	-- with `weapon` are special weapons (Shop > WEAPONS): a whole new look for that one weapon, with
+	-- exactly its stats. `color` is the swatch shown in the shop and inventory.
 	Skins = {
 		{ id = "Standard", name = "Standard", price = 0 },
 		{
@@ -252,7 +254,33 @@ local Config = {
 			color = Color3.fromRGB(212, 170, 60),
 			material = Enum.Material.Foil,
 		},
-	} :: { { id: string, name: string, price: number, color: Color3?, material: Enum.Material? } },
+		{
+			id = "DoubleTrouble",
+			name = "Double Trouble",
+			price = 1500,
+			weapon = "Knife",
+			color = Color3.fromRGB(120, 10, 16),
+			blurb = "Twin dark-red swords with a glow, a red swing trail and a shing when drawn.",
+		},
+		{
+			id = "MothersWrath",
+			name = "A Mother's Wrath",
+			price = 3000,
+			weapon = "AR",
+			color = Color3.fromRGB(16, 30, 90),
+			blurb = "Dark-blue rifle with glowing blue shots and blue lightning on every elimination.",
+		},
+	} :: {
+		{
+			id: string,
+			name: string,
+			price: number,
+			color: Color3?,
+			material: Enum.Material?,
+			weapon: string?,
+			blurb: string?,
+		}
+	},
 
 	-- Arenas players can queue for from the Camp More Maniar lobby, in picker order.
 	Maps = {
