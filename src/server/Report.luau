@@ -1,5 +1,7 @@
 --!strict
--- Report button recorder: each arena keeps a rolling log of positions and shots, saved on a report.
+-- Report button recorder. Each arena records its current round (positions 5 times a second and every
+-- trigger pull); when a round ends it becomes that arena's "last round". A report saves the reporter's
+-- last completed round (or the one in progress if none has finished yet), tagged by match and round.
 local DataStoreService = game:GetService("DataStoreService")
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
@@ -7,13 +9,12 @@ local RunService = game:GetService("RunService")
 local Combatants = require(script.Parent.Combatants)
 local Net = require(script.Parent.Net)
 
-type Ring = { rows: { { any } }, n: number }
+type Log = { match: string, round: number, rows: { { any } } }
 
-local PRACTICE = "Practice" -- the lobby range is not a match
 local SAMPLE_SECONDS = 0.2
-local KEEP_SECONDS = 150
--- 150 s of 2v2 positions plus as many shots: about 120 bytes a row, far under the 4 MB value cap.
-local CAPACITY = 2 * KEEP_SECONDS / SAMPLE_SECONDS * 4
+-- A 2:00 round plus its ride is ~130 s; 4 fighters at 5 Hz plus shots stays far under this cap, and
+-- at about 120 bytes a row far under DataStore's 4 MB value limit.
+local MAX_ROWS = 6000
 local UNITS = "t: 0.1 s server time; pos: 0.1 studs; dir: 0.001. p = {t, name, userId (0 = bot), team, x, y, z, "
 	.. "alive}; s = {t, name, ox, oy, oz, dx, dy, dz, hit, zone}"
 
@@ -22,7 +23,8 @@ local Report = {}
 local okStore, store = pcall(function()
 	return DataStoreService:GetDataStore("MilitaryDuels_Reports")
 end)
-local rings: { [string]: Ring } = {}
+local current: { [string]: Log } = {}
+local last: { [string]: Log } = {}
 local lastArena: { [Player]: string } = setmetatable({}, { __mode = "k" }) :: any
 
 local function now(): number
@@ -34,18 +36,27 @@ local function ints(v: Vector3, scale: number): (number, number, number)
 end
 
 local function push(arenaId: string, row: { any })
-	local ring = rings[arenaId] or { rows = {}, n = 0 }
-	rings[arenaId] = ring
-	ring.n += 1
-	ring.rows[(ring.n - 1) % CAPACITY + 1] = row
+	local log = current[arenaId]
+	if log and #log.rows < MAX_ROWS then
+		table.insert(log.rows, row)
+	end
+end
+
+-- Called by the arena when a round starts and when it ends.
+function Report.roundStart(arenaId: string, match: string, round: number)
+	current[arenaId] = { match = match, round = round, rows = {} }
+end
+
+function Report.roundEnd(arenaId: string)
+	if current[arenaId] then
+		last[arenaId], current[arenaId] = current[arenaId], nil
+	end
 end
 
 function Report.shot(c: Combatants.Combatant, origin: Vector3, dir: Vector3, hitName: string?, zone: string?)
-	if c.arena.id ~= PRACTICE then
-		local ox, oy, oz = ints(origin, 10)
-		local dx, dy, dz = ints(dir, 1000)
-		push(c.arena.id, { "s", now(), c.name, ox, oy, oz, dx, dy, dz, hitName or "", zone or "" })
-	end
+	local ox, oy, oz = ints(origin, 10)
+	local dx, dy, dz = ints(dir, 1000)
+	push(c.arena.id, { "s", now(), c.name, ox, oy, oz, dx, dy, dz, hitName or "", zone or "" })
 end
 
 local function record()
@@ -54,7 +65,7 @@ local function record()
 		local t = now()
 		for _, c in Combatants.all() do
 			local id = c.arena.id
-			if id ~= PRACTICE then
+			if current[id] then
 				local x, y, z = ints(c.root.Position, 10)
 				push(id, { "p", t, c.name, if c.player then c.player.UserId else 0, c.team, x, y, z, c.alive })
 				if c.player then
@@ -65,40 +76,32 @@ local function record()
 	end
 end
 
--- Only rows newer than `since` (an older match on the same map may still be in the ring).
-local function snapshot(ring: Ring, since: number): { { any } }
-	local out = {}
-	for i = math.max(1, ring.n - CAPACITY + 1), ring.n do
-		local row = ring.rows[(i - 1) % CAPACITY + 1]
-		if row[2] >= since then
-			table.insert(out, row)
-		end
-	end
-	return out
-end
-
--- Saves the reporter's arena log, or the last arena they played in when back in the lobby.
 local function submit(player: Player, target: number?): boolean
-	local c = Combatants.byPlayer(player)
-	local arenaId = if c and c.arena.id ~= PRACTICE then c.arena.id else lastArena[player]
-	local ring = if arenaId then rings[arenaId] else nil
-	if not arenaId or not ring then
+	local arenaId = lastArena[player]
+	local log = if arenaId then last[arenaId] or current[arenaId] else nil
+	if not arenaId or not log then
 		return false
 	end
-	local time = os.time()
-	local rows = snapshot(ring, now() - KEEP_SECONDS * 10)
-	local seen = false -- only someone who was actually in the logged match can be the target
-	for _, row in rows do
+	local seen = false -- only someone who was actually in the logged round can be the target
+	for _, row in log.rows do
 		seen = seen or (row[1] == "p" and row[4] == target)
 	end
-	target = if seen then target else nil
-	local payload =
-		{ reporter = player.UserId, target = target, time = time, map = arenaId, units = UNITS, rows = rows }
+	local time = os.time()
+	local payload = {
+		reporter = player.UserId,
+		target = if seen then target else nil,
+		time = time,
+		map = arenaId,
+		match = log.match,
+		round = log.round,
+		units = UNITS,
+		rows = log.rows,
+	}
 	local key = `report_{time}_{player.UserId}`
 	local saved = okStore and pcall((store :: DataStore).SetAsync, store :: DataStore, key, payload)
 	if not saved and RunService:IsStudio() then
 		local size = #HttpService:JSONEncode(payload)
-		warn(`[Report] {key}: {size} bytes, {#rows} rows (no DataStore access in Studio)`)
+		warn(`[Report] {key}: {size} bytes, {#log.rows} rows (no DataStore access in Studio)`)
 		return true
 	end
 	return saved

@@ -21,6 +21,7 @@ local Gadgets = require(script.Parent.Gadgets)
 local Loadout = require(script.Parent.Loadout)
 local MapKit = require(script.Parent.Maps.MapKit)
 local Net = require(script.Parent.Net)
+local Report = require(script.Parent.Report)
 local Rig = require(script.Parent.Rig)
 
 type Combatant = Combatants.Combatant
@@ -448,6 +449,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 
 	local function playRound(round: number, scores: Scores): Result?
 		clearField()
+		Report.roundStart(id, `{id}_{math.floor(matchStart)}`, round)
 		lastElimination = ""
 		lastZone = nil
 		lastKill = nil
@@ -542,6 +544,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		-- someone dies in the instant before this line runs.
 		local timedOut = state:GetAttribute("Phase") == "Live"
 		setPhase("RoundEnd")
+		Report.roundEnd(id)
 		if forfeit then
 			return nil
 		end
