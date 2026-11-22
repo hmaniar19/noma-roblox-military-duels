@@ -102,7 +102,7 @@ local Config = {
 		}),
 		SMG = gun({
 			name = "SMG",
-			damage = 19,
+			damage = 21, -- 5 body shots: kills faster than the AR up close (0.26 s vs 0.30 s)
 			falloffStart = 25,
 			falloffEnd = 70,
 			minDamageScale = 0.45,
@@ -264,13 +264,13 @@ local Config = {
 	RankedStart = 1000, -- Rank Points for a new ranked player; a win moves 25 points from loser to winner
 	RankedSwing = 25,
 
-	-- Anime finisher styles (Shop > FINISHERS): the ink color and slash style of your round-win finisher.
+	-- Finisher inks (Shop > FINISHERS): the ink color of your round-win anime finisher's slashes and splatter.
 	Finishers = {
 		{ id = "Crimson", name = "Crimson Ink", price = 0, ink = Color3.fromRGB(200, 20, 30) },
 		{ id = "Midnight", name = "Midnight Ink", price = 250, ink = Color3.fromRGB(40, 40, 120) },
-		{ id = "Gold", name = "Golden Strike", price = 500, ink = Color3.fromRGB(235, 190, 60) },
-		{ id = "Sakura", name = "Sakura Storm", price = 500, ink = Color3.fromRGB(250, 140, 190) },
-		{ id = "Thunder", name = "Thunder Blue", price = 800, ink = Color3.fromRGB(70, 170, 255) },
+		{ id = "Gold", name = "Golden Ink", price = 500, ink = Color3.fromRGB(235, 190, 60) },
+		{ id = "Sakura", name = "Sakura Ink", price = 500, ink = Color3.fromRGB(250, 140, 190) },
+		{ id = "Thunder", name = "Thunder Ink", price = 800, ink = Color3.fromRGB(70, 170, 255) },
 	} :: { { id: string, name: string, price: number, ink: Color3 } },
 
 	-- Free emotes for everyone: Roblox's default animations, or a pose built from code ("pose:").

@@ -344,7 +344,9 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 		return
 	end
 	if c.player then
-		AntiCheat.validate(c)
+		if AntiCheat.validate(c) then
+			return -- fired from a position the server just corrected
+		end
 		local reason = rejectClaim(c, origin, aimDir)
 		if reason then
 			AntiCheat.flag(c, reason)

@@ -683,7 +683,8 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		setPhase("Starting")
 		local starts = os.clock() + Config.QueueSeconds
 		local perTeam = 1
-		while os.clock() < starts do
+		-- A ranked queue never fills with bots: it waits for enough ranked players.
+		while os.clock() < starts or state:GetAttribute("Ranked") and #queue < perTeam * 2 do
 			perTeam = if state:GetAttribute("Mode") == "2v2" then 2 else 1
 			if #queue == 0 then
 				return false -- everyone left during the countdown
@@ -739,9 +740,16 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			if table.find(queue, player) then
 				return
 			end
-			-- The first in line picks the mode; it stays fixed while the next match is assembling.
+			-- The first in line picks the mode and ranked or casual; both stay fixed while the next
+			-- match is assembling, and only players with the same ranked setting can join it.
+			local ranked = player:GetAttribute("Ranked") == true
 			if #queue == 0 and state:GetAttribute("Phase") ~= "Starting" then
 				state:SetAttribute("Mode", if mode == "2v2" then "2v2" else "1v1")
+				state:SetAttribute("Ranked", ranked)
+			elseif (state:GetAttribute("Ranked") == true) ~= ranked then
+				local kind = if ranked then "casual" else "ranked"
+				Net.Toast:FireClient(player, "Queue is " .. kind, "Pick another map, or switch RANKED to match.")
+				return
 			end
 			table.insert(queue, player)
 			player:SetAttribute("Queued", id)

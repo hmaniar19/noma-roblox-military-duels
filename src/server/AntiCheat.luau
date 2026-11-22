@@ -81,9 +81,10 @@ end
 
 -- Physics glitches (wedging into geometry, getting flung) can still push a character out of the map;
 -- anything that ends up outside is returned to its last grounded spot.
-local function check(c: Combatants.Combatant, now: number, force: boolean)
+-- Returns true when it had to move the combatant back.
+local function check(c: Combatants.Combatant, now: number, force: boolean): boolean
 	if now - c.lastCheck < AC.CheckInterval and not force then
-		return
+		return false
 	end
 	c.lastCheck = now
 	local root = c.root
@@ -94,20 +95,20 @@ local function check(c: Combatants.Combatant, now: number, force: boolean)
 			c.lastGrounded = root.CFrame
 			c.doubleJumped = false -- landing recharges the mid-air jump
 		end
-		return
+		return false
 	end
 	-- Falling off is not cheating; getting above the ceiling or past the walls is.
 	if pos.Y >= boundsMin.Y then
 		AntiCheat.flag(c, `out of bounds at {math.floor(pos.X)},{math.floor(pos.Y)},{math.floor(pos.Z)}`)
 	end
 	Combatants.teleport(c, c.lastGrounded)
+	return true
 end
 
--- Validate a player's position right now (before trusting it for a shot).
-function AntiCheat.validate(c: Combatants.Combatant)
-	if c.player and c.alive and not c.root.Anchored and c.root.Parent then
-		check(c, os.clock(), true)
-	end
+-- Validate a player's position right now (before trusting it for a shot). True if it was corrected,
+-- in which case the shot is dropped: it was fired from a position the server didn't accept.
+function AntiCheat.validate(c: Combatants.Combatant): boolean
+	return c.player ~= nil and c.alive and not c.root.Anchored and c.root.Parent ~= nil and check(c, os.clock(), true)
 end
 
 function AntiCheat.start()

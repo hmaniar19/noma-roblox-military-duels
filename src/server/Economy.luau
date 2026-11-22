@@ -125,7 +125,7 @@ end
 -- SAVE_GAP seconds. Session locking: the saved record names the server that owns it ("lock"); a save
 -- only writes while this server still owns the lock, so an old server can never overwrite a newer
 -- session after a quick rejoin. Saves refresh the lock; the final save releases it.
-local SAVE_GAP, LOCK_TTL = 6, 90
+local SAVE_GAP, LOCK_TTL = 6, 60
 local JOB = if game.JobId ~= "" then game.JobId else HttpService:GenerateGUID(false)
 local dirty: { [Player]: boolean } = {}
 local saving: { [Player]: boolean } = {}
@@ -164,24 +164,31 @@ local function save(player: Player, release: boolean?)
 	end
 end
 
--- Waits out any write in flight, then saves now (leaving and shutdown); `release` frees the lock.
+-- Waits out any write in flight, then saves now (leaving and shutdown), retrying a failed write a
+-- few times since the player's progress is gone once they leave; `release` frees the lock.
 local function flush(player: Player, release: boolean?)
-	while saving[player] do
-		task.wait()
+	for _ = 1, 3 do
+		while saving[player] do
+			task.wait()
+		end
+		save(player, release)
+		if not dirty[player] then
+			return
+		end
+		task.wait(1)
 	end
-	save(player, release)
 end
 
--- Claims the profile for this server: waits up to ~12 s for another server's live lock (its final
--- save on leave), then takes over a lock that is stale or never released. Returns ok and the data.
+-- Claims the profile for this server. A live lock held by another server (refreshed every 30 s) is
+-- honored: wait up to ~30 s for that server's final save, else play this visit without saving.
+-- Returns ok and the data.
 local function claim(player: Player): (boolean, any)
-	for attempt = 1, 7 do
+	for _ = 1, 10 do
 		local claimed, data = false, nil
 		local ok, err = pcall(function()
 			(store :: DataStore):UpdateAsync(key(player), function(old: any)
 				local lock = if typeof(old) == "table" and typeof(old.lock) == "table" then old.lock else nil
-				local live = lock and lock.job ~= JOB and typeof(lock.at) == "number" and os.time() - lock.at < LOCK_TTL
-				if live and attempt < 7 then
+				if lock and lock.job ~= JOB and typeof(lock.at) == "number" and os.time() - lock.at < LOCK_TTL then
 					return nil
 				end
 				local record = if typeof(old) == "table" then old else {}
@@ -195,9 +202,22 @@ local function claim(player: Player): (boolean, any)
 		elseif claimed then
 			return true, data
 		end
-		task.wait(2)
+		task.wait(3)
 	end
-	return false, "profile is busy"
+	return false, "profile is busy on another server"
+end
+
+-- Frees this server's lock without writing a profile (a claim that finished after the player left).
+local function unlock(player: Player)
+	pcall(function()
+		(store :: DataStore):UpdateAsync(key(player), function(old: any)
+			if typeof(old) == "table" and typeof(old.lock) == "table" and old.lock.job == JOB then
+				old.lock = nil
+				return old
+			end
+			return nil
+		end)
+	end)
 end
 
 local function field(data: any, name: string, kind: string): any
@@ -259,6 +279,9 @@ local function load(player: Player)
 	}
 	p.owned.Standard = true
 	if player.Parent == nil then
+		if readOk then
+			unlock(player) -- they left while the profile loaded
+		end
 		return
 	end
 	profiles[player], loaded[player] = p, readOk

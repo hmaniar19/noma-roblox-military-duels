@@ -520,7 +520,8 @@ RunService.RenderStepped:Connect(function()
 		local a = arenas:FindFirstChild(m.id)
 		local phase = a and a:GetAttribute("Phase")
 		local count = (a and a:GetAttribute("Queued") or 0) :: number
-		local mode = a and a:GetAttribute("Mode") or "1v1"
+		local ranked = a and count > 0 and a:GetAttribute("Ranked") == true
+		local mode = (a and a:GetAttribute("Mode") or "1v1") .. (if ranked then " RANKED" else "")
 		card.info.Text = if phase == "Starting"
 			then `{count} queued · {mode} starts {clock((a :: Instance):GetAttribute("StartsAt"), now)}`
 			elseif phase and phase ~= "Waiting" then `Match in progress · {count} waiting`
