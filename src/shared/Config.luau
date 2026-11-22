@@ -417,7 +417,9 @@ local Config = {
 		LookRate = 30, -- max look updates per second (client sends about half that)
 		MaxShotsPerSecond = 16, -- remote-level spam cap; per-weapon cadence is enforced in Combat.fire
 		MaxRewind = 0.35, -- seconds of lag compensation
-		MaxYawAngle = 60, -- degrees between shot yaw and the server-simulated body facing (fast flicks lag it)
+		-- Degrees between shot yaw and the server-simulated body facing at any moment in the lag window
+		-- (the window absorbs fast flicks, so this only covers the body trailing the camera).
+		MaxYawAngle = 45,
 		CheckInterval = 0.25,
 		-- Each flag adds a suspicion score by reason (matched by prefix; FlagDefaultWeight otherwise).
 		-- The score drains steadily, so lag blips never add up; reaching the threshold means Bot Bootcamp.
