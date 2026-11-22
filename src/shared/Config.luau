@@ -44,7 +44,6 @@ end
 local Config = {
 	RoundsToWin = 5,
 	SuddenDeathAt = 4,
-	MaxRounds = 15, -- a match that reaches this many rounds (draws included) ends on the score
 	RoundSeconds = 120,
 	FreezeSeconds = 10, -- the drop-in ride; the loadout is picked during it
 	QueueSeconds = 10, -- after the first player queues for a map, others have this long to join
@@ -245,8 +244,9 @@ local Config = {
 		[11238400758] = "Aar0nBu44", -- Noelle, the game's designer
 	} :: { [number]: string },
 
-	-- XP and levels. A typical match (finish + some eliminations, a win half the time) is ~160 XP;
-	-- level 100 needs ~29,700 XP, about 185 matches: 2-3 weeks of normal play.
+	-- XP and levels. A typical match (finish + some eliminations, a win half the time) is ~160 XP and
+	-- lasts ~6 minutes; level 100 needs ~29,700 XP, about 185 matches or ~18 hours: about 1.5 hours a
+	-- day for 2 weeks, or 1 hour a day for 3 weeks.
 	Xp = {
 		Finish = 50, -- for playing a match to the end
 		Win = 100,

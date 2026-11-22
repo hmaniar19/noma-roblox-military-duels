@@ -78,7 +78,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	local lastElimination = ""
 	local lastZone: Config.Zone? = nil -- zone of the latest elimination (for the payout)
 	-- The latest elimination by someone else, for the round-end cutscenes (bullet cam, finisher).
-	local lastKill: { attacker: Combatant, victim: Combatant, from: Vector3, to: Vector3 }? = nil
+	local lastKill: { attacker: Combatant, victim: Combatant, weapon: string?, from: Vector3, to: Vector3 }? = nil
 	local kills: { [Player]: number } = {} -- eliminations this match, for XP
 	local endCelebration: (() -> ())? = nil -- tears down a celebration in progress
 
@@ -145,17 +145,19 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			return state:GetAttribute("Phase") == "Live"
 				and workspace:GetServerTimeNow() < (state:GetAttribute("RoundEndsAt") or 0)
 		end,
-		onElimination = function(victim, attacker, zone)
-			-- Only a kill by someone else can make the deciding elimination a headshot.
-			lastZone = if attacker and attacker ~= victim then zone else nil
+		onElimination = function(victim, attacker, zone, weapon)
+			-- Only a gun kill by someone else can make the deciding elimination a headshot.
+			local gun = weapon ~= nil and Config.Weapons[weapon] ~= nil and Config.Weapons[weapon].kind == "gun"
+			lastZone = if attacker and attacker ~= victim and gun then zone else nil
 			if attacker and attacker ~= victim then
 				if attacker.player then
 					kills[attacker.player] = (kills[attacker.player] or 0) + 1
 				end
 				lastElimination = `{attacker.name} eliminated {victim.name}`
-					.. (if zone == "Head" then " with a HEADSHOT" else "")
+					.. (if lastZone == "Head" then " with a HEADSHOT" else "")
 				lastKill = {
 					attacker = attacker,
+					weapon = weapon,
 					victim = victim,
 					from = Combat.headPosition(attacker),
 					to = Combat.headPosition(victim),
@@ -268,7 +270,6 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				Net.Cutscene:FireClient(e.player, kind, data)
 			end
 		end
-		local anyone = next(waiting) ~= nil
 		local started = os.clock()
 		local deadline = started + seconds + Config.CutsceneGraceSeconds
 		while os.clock() < deadline do
@@ -278,8 +279,8 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				end
 			end
 			local elapsed = os.clock() - started
-			-- Never before 70% of the scene; with nobody watching (bots only), let it play out fully.
-			if next(waiting) == nil and elapsed >= seconds * 0.7 and (anyone or elapsed >= seconds) then
+			-- Never before the scene's full length, so nobody skips the ending.
+			if next(waiting) == nil and elapsed >= seconds then
 				break
 			end
 			task.wait(0.1)
@@ -339,50 +340,53 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		return true
 	end
 
-	-- Draw: one fighter from each team walks to the middle of a small stage above the arena and
-	-- they shake hands. Stand-ins are used so it works even when both sides were eliminated.
+	-- Draw: each Navy fighter pairs with the Grey fighter at the same roster slot, side by side on a
+	-- small stage above the arena, and they shake hands. Stand-ins work even when both sides were eliminated.
 	local function handshake()
 		local middle = (info.boundsMin + info.boundsMax) / 2
 		local center = Vector3.new(middle.X, info.boundsMin.Y + 12 + 140, middle.Z)
 		local pad = Instance.new("Part")
-		pad.Anchored, pad.Size = true, Vector3.new(30, 1, 18)
+		pad.Anchored, pad.Size = true, Vector3.new(36, 1, 18)
 		pad.CFrame = CFrame.new(center - Vector3.new(0, 0.5, 0))
 		pad.Material, pad.Color = Enum.Material.Concrete, Color3.fromRGB(120, 116, 108)
 		pad.Parent = rides
-		local actors: { Model } = {}
-		for i, team in { "Navy", "Grey" } :: { TeamId } do
-			for _, e in roster do
-				if e.team == team then
-					local side = if i == 1 then -1 else 1
-					local start = center + Vector3.new(0, 3, side * 10)
-					local userId = if e.player then e.player.UserId else e.userId
-					local cf = CFrame.lookAt(start, center + Vector3.new(0, 3, 0))
-					local ok, model = pcall(Rig.spawnBot, team, e.name, cf, rides, userId)
-					local actorRoot = if ok and model then model:FindFirstChild("HumanoidRootPart") else nil
-					if actorRoot and actorRoot:IsA("BasePart") then
-						model.PrimaryPart = actorRoot
-						actorRoot.Anchored = true
-						table.insert(actors, model)
-					elseif ok and model then
-						model:Destroy()
-					end
-					break
-				end
+		local actors: { { model: Model, side: number, x: number } } = {}
+		local slots: { [TeamId]: number } = { Navy = 0, Grey = 0 }
+		local count = 0
+		for _, e in roster do
+			slots[e.team] += 1
+			count = math.max(count, slots[e.team])
+		end
+		slots = { Navy = 0, Grey = 0 }
+		for _, e in roster do
+			slots[e.team] += 1
+			local side = if e.team == "Navy" then -1 else 1
+			local x = (slots[e.team] - (count + 1) / 2) * 6
+			local start = center + Vector3.new(x, 3, side * 10)
+			local userId = if e.player then e.player.UserId else e.userId
+			local cf = CFrame.lookAt(start, center + Vector3.new(x, 3, 0))
+			local ok, model = pcall(Rig.spawnBot, e.team, e.name, cf, rides, userId)
+			local actorRoot = if ok and model then model:FindFirstChild("HumanoidRootPart") else nil
+			if actorRoot and actorRoot:IsA("BasePart") then
+				model.PrimaryPart = actorRoot
+				actorRoot.Anchored = true
+				table.insert(actors, { model = model, side = side, x = x })
+			elseif ok and model then
+				model:Destroy()
 			end
 		end
 		task.spawn(function()
 			local runs = {}
 			for _, a in actors do
-				table.insert(runs, Rig.animate(a, "run", true))
+				table.insert(runs, Rig.animate(a.model, "run", true))
 			end
 			local steps = 36
 			for s = 1, steps do
-				for i, a in actors do
-					if a.Parent then
-						local side = if i == 1 then -1 else 1
-						local z = side * (10 - 8.4 * s / steps)
-						local p = center + Vector3.new(0, 3, z)
-						a:PivotTo(CFrame.lookAt(p, p - Vector3.new(0, 0, side)))
+				for _, a in actors do
+					if a.model.Parent then
+						local z = a.side * (10 - 8.4 * s / steps)
+						local p = center + Vector3.new(a.x, 3, z)
+						a.model:PivotTo(CFrame.lookAt(p, p - Vector3.new(0, 0, a.side)))
 					end
 				end
 				task.wait(0.05)
@@ -395,7 +399,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			-- Right arms out to meet in the middle, then a few shakes.
 			local shoulders = {}
 			for _, a in actors do
-				local arm = a:FindFirstChild("RightUpperArm")
+				local arm = a.model:FindFirstChild("RightUpperArm")
 				local joint = arm and arm:FindFirstChild("RightShoulder")
 				if joint and joint:IsA("Motor6D") then
 					table.insert(shoulders, { joint = joint, rest = joint.C0 })
@@ -413,7 +417,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		end)
 		cutscene("Handshake", { center = center }, 4.5)
 		for _, a in actors do
-			a:Destroy()
+			a.model:Destroy()
 		end
 		pad:Destroy()
 	end
@@ -426,7 +430,8 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			return true
 		end
 		local kill = lastKill
-		if lastZone == "Head" and kill and kill.attacker.team == result then
+		local gun = kill and kill.weapon and Config.Weapons[kill.weapon]
+		if lastZone == "Head" and kill and gun and gun.kind == "gun" and kill.attacker.team == result then
 			cutscene("BulletCam", {
 				from = kill.from,
 				to = kill.to,
@@ -481,13 +486,23 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		state:SetAttribute("FreezeEndsAt", workspace:GetServerTimeNow() + Config.FreezeSeconds)
 		banner("RoundStart", { round = round, sudden = sudden, navySide = navySide, drop = drop })
 		local landed = false
+		local freezeEnds = os.clock() + Config.FreezeSeconds + 1
 		task.spawn(function()
-			Drop.run(drop, { navyRide, greyRide }, Config.FreezeSeconds, rides)
+			Drop.run(drop, { navyRide, greyRide }, Config.FreezeSeconds, rides, function()
+				return landed or forfeit ~= nil or os.clock() >= freezeEnds
+			end)
 			landed = true
 		end)
-		local freezeEnds = os.clock() + Config.FreezeSeconds + 1
 		while not landed and os.clock() < freezeEnds and not forfeit do
 			task.wait(0.05)
+		end
+		landed = true
+		for _, g in { navyRide, greyRide } do
+			for i, c in g.riders do
+				if c.root.Parent then
+					c.root.CFrame = g.spawns[i] or g.spawns[1]
+				end
+			end
 		end
 		if forfeit then
 			-- Removing the vehicles ends the ride for anyone still aboard.
@@ -543,7 +558,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	-- Noelle's rules: the winners earn 120 if the match-winning elimination was a headshot, else 80
 	-- (a forfeit win counts as 80); the losers earn 10 for each round they won. Everyone who finishes
 	-- earns XP (more for a win and per elimination), and ranked players gain or lose rank points.
-	local function payout(winner: Result, scores: Scores, headshot: boolean)
+	local function payout(winner: TeamId, scores: Scores, headshot: boolean)
 		local P, X = Config.Payouts, Config.Xp
 		-- Rank points move only between human teams that both entered ranked.
 		local rankedTeams: { [string]: boolean } = {}
@@ -554,7 +569,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				rankedTeams[e.team] = true
 			end
 		end
-		local ranked = winner ~= "Draw" and not anyBot and rankedTeams.Navy and rankedTeams.Grey
+		local ranked = not anyBot and rankedTeams.Navy and rankedTeams.Grey
 		for _, e in roster do
 			local player = e.player
 			if player and player.Parent then
@@ -565,7 +580,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				elseif scores[e.team] > 0 then
 					Economy.award(player, P.LoserPerRound * scores[e.team], `{scores[e.team]} round(s) won`)
 				end
-				local earned = if winner == "Draw" then 0 else X.Elimination * (kills[player] or 0)
+				local earned = X.Elimination * (kills[player] or 0)
 				Economy.awardXp(player, X.Finish + (if won then X.Win else 0) + earned)
 				if ranked and e.ranked then
 					Economy.ranked(player, won)
@@ -592,12 +607,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 
 		local round = 0
 		local result: Result? = nil
-		while
-			scores.Navy < Config.RoundsToWin
-			and scores.Grey < Config.RoundsToWin
-			and not forfeit
-			and round < Config.MaxRounds
-		do
+		while scores.Navy < Config.RoundsToWin and scores.Grey < Config.RoundsToWin and not forfeit do
 			round += 1
 			result = playRound(round, scores)
 			if not result then
@@ -618,12 +628,8 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			end
 		end
 
-		-- A forfeit gives the other side the match; otherwise (including the round cap) the score decides.
-		local winner: Result = if forfeit
-			then other(forfeit)
-			elseif scores.Navy > scores.Grey then "Navy"
-			elseif scores.Grey > scores.Navy then "Grey"
-			else "Draw"
+		-- A forfeit gives the other side the match; otherwise the side that reached RoundsToWin wins.
+		local winner: TeamId = if forfeit then other(forfeit) elseif scores.Navy > scores.Grey then "Navy" else "Grey"
 		decided = true
 		setPhase("MatchEnd")
 		state:SetAttribute("Winner", winner)
@@ -633,7 +639,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		lastKill = nil
 		-- The fight is over: the celebration stage replaces the field for everyone in the match.
 		clearField()
-		if winner ~= "Draw" then
+		do
 			local members: { Celebration.Member } = {}
 			for _, e in roster do
 				local player = if e.player and e.player.Parent then e.player else nil
@@ -649,14 +655,12 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			end
 			local center = (info.boundsMin + info.boundsMax) / 2
 			local ground = Vector3.new(center.X, info.boundsMin.Y + 12, center.Z)
-			local focus, finish = Celebration.play(ground, winner :: TeamId, members, bots)
+			local focus, finish = Celebration.play(ground, winner, members, bots)
 			endCelebration = finish
 			banner("Celebrate", { focus = focus, seconds = Config.MatchEndSeconds })
 			task.wait(Config.MatchEndSeconds)
 			endCelebration = nil
 			finish()
-		else
-			task.wait(Config.RoundEndSeconds)
 		end
 		clearField()
 		local leaving = roster

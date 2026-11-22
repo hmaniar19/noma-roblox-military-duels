@@ -194,6 +194,27 @@ local shield = text(
 )
 shield.Text = "SPAWN SHIELD (firing drops it)"
 
+-- Sniper scope: black mask around a round clear view, thin crosshairs and a red dot.
+local BLACK, RED = Color3.new(), Color3.fromRGB(235, 40, 40)
+local scope = frame(UDim2.fromScale(0.9, 0.9), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), BLACK, 1)
+scope.SizeConstraint = Enum.SizeConstraint.RelativeYY
+scope.ZIndex = 0 -- under the health, ammo and banners
+local scopeCorner = Instance.new("UICorner")
+scopeCorner.CornerRadius = UDim.new(0.5, 0)
+scopeCorner.Parent = scope
+-- The ring's stroke fills the square's corners outside the circle; its width follows the screen size.
+local ring = Instance.new("UIStroke")
+ring.Color = BLACK
+ring.Parent = scope
+frame(UDim2.fromScale(5, 5), UDim2.fromScale(0, 0.5), Vector2.new(1, 0.5), BLACK, 0, scope)
+frame(UDim2.fromScale(5, 5), UDim2.fromScale(1, 0.5), Vector2.new(0, 0.5), BLACK, 0, scope)
+frame(UDim2.fromScale(1, 5), UDim2.fromScale(0.5, 0), Vector2.new(0.5, 1), BLACK, 0, scope)
+frame(UDim2.fromScale(1, 5), UDim2.fromScale(0.5, 1), Vector2.new(0.5, 0), BLACK, 0, scope)
+frame(UDim2.new(1, 0, 0, 1), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), BLACK, 0, scope)
+frame(UDim2.new(0, 1, 1, 0), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), BLACK, 0, scope)
+local dot = frame(UDim2.fromOffset(6, 6), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), RED, 0, scope)
+round(dot, 3)
+
 -- Big center banner
 local bannerTitle = text(gui, UDim2.fromOffset(800, 90), UDim2.fromScale(0.5, 0.28), Vector2.new(0.5, 0.5), 72)
 local bannerSub = text(gui, UDim2.fromOffset(800, 40), UDim2.fromScale(0.5, 0.36), Vector2.new(0.5, 0.5), 24)
@@ -252,9 +273,7 @@ Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 	elseif kind == "MatchEnd" then
 		local score = `{data.navy} - {data.grey}`
 		local how = if data.forfeit then "Opponent left the match" else score
-		if data.winner == "Draw" then
-			showBanner("MATCH DRAWN", `Round limit reached · {score}`, GOLD, Config.MatchEndSeconds)
-		elseif team then
+		if team then
 			local won = data.winner == team
 			showBanner(if won then "VICTORY" else "DEFEAT", how, if won then GOLD else LOSE, Config.MatchEndSeconds)
 		else
@@ -348,8 +367,9 @@ RunService.RenderStepped:Connect(function()
 
 	local team = myTeam()
 	local combat = Weapon.inCombat()
-	healthBack.Visible, ammoText.Visible, hint.Visible, cross.Visible = combat, combat, combat, combat
-	slotsLabel.Visible = combat
+	healthBack.Visible, ammoText.Visible, hint.Visible, slotsLabel.Visible = combat, combat, combat, combat
+	cross.Visible, scope.Visible = combat and not Weapon.scoped, combat and Weapon.scoped
+	ring.Thickness = scope.AbsoluteSize.X * 0.25
 	if team then
 		teamLabel.Text = `YOU: {Config.Teams[team].name}`
 		teamLabel.TextColor3 = Config.Teams[team].hud

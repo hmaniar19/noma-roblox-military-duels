@@ -158,8 +158,12 @@ local function parachute(g: Group, folder: Instance): Track
 end
 
 -- Runs one ride of `kind` for every group, taking `seconds`; returns with every rider anchored on
--- their spawn point. `folder` holds the ride's models and is the caller's to clear.
-function Drop.run(kind: string, groups: { Group }, seconds: number, folder: Instance)
+-- their spawn point. `folder` holds the ride's models and is the caller's to clear. Riders stop
+-- moving as soon as `cancelled` returns true; placing them is then the caller's job.
+function Drop.run(kind: string, groups: { Group }, seconds: number, folder: Instance, cancelled: (() -> boolean)?)
+	local function stopped(): boolean
+		return cancelled ~= nil and cancelled()
+	end
 	local tracks: { Track } = {}
 	for _, g in groups do
 		if #g.riders > 0 then
@@ -173,7 +177,7 @@ function Drop.run(kind: string, groups: { Group }, seconds: number, folder: Inst
 		end
 	end
 	local start = os.clock()
-	while true do
+	while not stopped() do
 		local t = (os.clock() - start) / seconds
 		for _, track in tracks do
 			track.step(math.min(t, 1))
@@ -185,6 +189,9 @@ function Drop.run(kind: string, groups: { Group }, seconds: number, folder: Inst
 	end
 	for _, track in tracks do
 		track.finish()
+	end
+	if stopped() then
+		return
 	end
 	for _, g in groups do
 		for i, c in g.riders do

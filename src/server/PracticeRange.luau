@@ -19,7 +19,8 @@ export type Range = { leave: (player: Player) -> (), isPracticing: (player: Play
 local PracticeRange = {}
 
 local ID = "Practice"
-local RACK_WEAPONS = { "AR", "SMG", "Shotgun", "Sniper", "MothersWrath", "DoubleTrouble", "Pistol", "Knife" }
+-- One rack per weapon a player can pick (the Pistol and Knife come with every practice kit).
+local RACK_WEAPONS = { "AR", "SMG", "Shotgun", "Sniper", "MothersWrath", "DoubleTrouble" }
 local DEFAULT_WALK = 16
 
 local function inside(p: Vector3, lo: Vector3, hi: Vector3): boolean

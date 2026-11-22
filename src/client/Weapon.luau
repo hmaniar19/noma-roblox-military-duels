@@ -33,6 +33,7 @@ local Weapon = {}
 Weapon.aiming = false
 Weapon.menuOpen = false -- set by Menu; keeps the cursor visible while a picker is open
 Weapon.cutscene = false -- set by Cutscene; the first-person gun hides while one plays
+Weapon.scoped = false -- looking through a sniper scope this frame; Hud draws the overlay
 
 local firing = false
 local aimBlend = 0
@@ -448,6 +449,7 @@ end
 
 local nextFollowCheck = 0
 RunService.RenderStepped:Connect(function(dt: number)
+	Weapon.scoped = false
 	local camera = workspace.CurrentCamera
 	if not Weapon.inCombat() then
 		viewmodel.Parent = nil
@@ -481,7 +483,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 		Look:FireServer(camera.CFrame.LookVector)
 	end
 
-	local scoped = w.scoped and aimBlend > 0.9
+	Weapon.scoped = w.scoped and aimBlend > 0.9
 	local reloading = player:GetAttribute("Reloading") == true
 	local healing = player:GetAttribute("Healing") == true
 	aimBlend += ((if Weapon.aiming and w.kind == "gun" and not reloading then 1 else 0) - aimBlend) * math.min(
@@ -509,7 +511,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 		0.5 * sprintBlend,
 		0.2 * sprintBlend
 	)
-	viewmodel.Parent = if scoped then nil else camera
+	viewmodel.Parent = if Weapon.scoped then nil else camera
 	viewmodel:PivotTo(camera.CFrame * offset * kick * stab * pose * dip)
 	if viewmodel.PrimaryPart then
 		animateParts(viewmodel.PrimaryPart, id, t, now - lastFire)

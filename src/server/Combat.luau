@@ -243,9 +243,18 @@ local function wrathStrike(at: Vector3)
 	task.delay(0.5, glow.Destroy, glow)
 end
 
-function Combat.damage(target: Combatant, amount: number, attacker: Combatant, zone: Config.Zone)
+-- Returns nil if the hit was blocked, else whether it killed. `quiet` skips the hit/hurt
+-- notifications so a multi-pellet shot can send one of each.
+function Combat.damage(
+	target: Combatant,
+	amount: number,
+	attacker: Combatant,
+	zone: Config.Zone,
+	weapon: string?,
+	quiet: boolean?
+): boolean?
 	if not target.alive or os.clock() < target.shieldUntil then
-		return
+		return nil
 	end
 	local humanoid = target.humanoid
 	humanoid.Health = math.max(0, humanoid.Health - amount)
@@ -254,20 +263,26 @@ function Combat.damage(target: Combatant, amount: number, attacker: Combatant, z
 		target.healingUntil = 0 -- taking damage interrupts a med kit
 		Combatants.sync(target)
 	end
-	local from = attacker.root.Position
 	if killed then
 		target.alive = false
-		if Combatants.weapon(attacker) == "MothersWrath" then
+		if weapon == "MothersWrath" then
 			wrathStrike(target.root.Position)
 		end
-		target.arena.onElimination(target, attacker, zone)
+		target.arena.onElimination(target, attacker, zone, weapon)
 	end
+	if not quiet then
+		Combat.notify(attacker, target, zone, killed, amount)
+	end
+	return killed
+end
+
+function Combat.notify(attacker: Combatant, target: Combatant, zone: Config.Zone?, killed: boolean, amount: number)
 	local hitBy, hurt = attacker.player, target.player
-	if hitBy and attacker ~= target and hitBy.Parent ~= nil then
+	if zone and hitBy and attacker ~= target and hitBy.Parent ~= nil then
 		pcall(Net.HitConfirm.FireClient, Net.HitConfirm, hitBy, zone, killed)
 	end
 	if hurt and hurt.Parent ~= nil then
-		pcall(Net.Damaged.FireClient, Net.Damaged, hurt, from, amount)
+		pcall(Net.Damaged.FireClient, Net.Damaged, hurt, attacker.root.Position, amount)
 	end
 end
 
@@ -360,7 +375,7 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 		local victim, zone = trace(c, origin, aimDir, if wall then wall.Distance else w.range, rewind)
 		Net.ShotFx:FireAllClients(c.model, origin, origin, false, true)
 		if victim and zone then
-			Combat.damage(victim, w.damage, c, zone :: Config.Zone)
+			Combat.damage(victim, w.damage, c, zone :: Config.Zone, id)
 		end
 		return
 	end
@@ -370,6 +385,9 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 	local velocity = c.root.AssemblyLinearVelocity
 	local moving = Vector3.new(velocity.X, 0, velocity.Z).Magnitude > 3
 	local spread = (if c.aiming then w.spreadAim else w.spreadHip) + (if moving then w.spreadMoving else 0)
+	local RANK = { Head = 3, Body = 2, Legs = 1 }
+	local dealt: { [Combatant]: number } = {}
+	local bestZone: Config.Zone?, anyKilled = nil, false
 	for _ = 1, w.pellets do
 		local dir = Hitbox.spread(aimDir, spread, rng)
 		local wallHit = workspace:Raycast(origin, dir * w.range, occlusion())
@@ -377,8 +395,21 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 		Net.ShotFx:FireAllClients(c.model, origin, origin + dir * dist, victim == nil and wallHit ~= nil, false)
 		if victim and zone then
 			local hitZone = zone :: Config.Zone
-			Combat.damage(victim, Hitbox.damage(w, hitZone, dist), c, hitZone)
+			local amount = Hitbox.damage(w, hitZone, dist)
+			local killed = Combat.damage(victim, amount, c, hitZone, id, true)
+			if killed ~= nil then
+				dealt[victim] = (dealt[victim] or 0) + amount
+				anyKilled = anyKilled or killed
+				if not bestZone or (RANK[hitZone] or 0) > (RANK[bestZone] or 0) then
+					bestZone = hitZone
+				end
+			end
 		end
+	end
+	-- One hit marker for the shooter, one damage event per victim.
+	for victim, amount in dealt do
+		Combat.notify(c, victim, bestZone, anyKilled, amount)
+		bestZone = nil
 	end
 	if c.ammo[id] <= 0 then
 		Combat.reload(c)
@@ -417,13 +448,13 @@ function Combat.bind()
 	end)
 	Net.Reload.OnServerEvent:Connect(function(player)
 		local c = Combatants.byPlayer(player)
-		if c and Net.allow(player, "Reload", 2, 2) then
+		if c and Net.allow(player, "Reload", 2, 2) and Combat.isLive(c) then
 			Combat.reload(c)
 		end
 	end)
 	Net.Aim.OnServerEvent:Connect(function(player, aiming)
 		local c = Combatants.byPlayer(player)
-		if not c or not Net.allow(player, "Aim", 10, 5) then
+		if not c or not Net.allow(player, "Aim", 10, 5) or not Combat.isLive(c) then
 			return
 		end
 		if typeof(aiming) ~= "boolean" then
@@ -438,7 +469,7 @@ function Combat.bind()
 	end)
 	Net.Stance.OnServerEvent:Connect(function(player, stance)
 		local c = Combatants.byPlayer(player)
-		if not c or not Net.allow(player, "Stance", 10, 5) then
+		if not c or not Net.allow(player, "Stance", 10, 5) or not Combat.isLive(c) then
 			return
 		end
 		if stance == "Slide" then

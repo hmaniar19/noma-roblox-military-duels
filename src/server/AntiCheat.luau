@@ -125,7 +125,7 @@ function AntiCheat.start()
 	RunService.Heartbeat:Connect(function()
 		local now = os.clock()
 		for _, c in Combatants.all() do
-			if c.player and c.alive and not c.root.Anchored and c.root.Parent then
+			if c.alive and not c.root.Anchored and c.root.Parent then
 				check(c, now, false)
 			end
 		end

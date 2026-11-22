@@ -11,7 +11,7 @@ local Config = require(ReplicatedStorage.Shared.Config)
 export type ArenaHooks = {
 	id: string,
 	isLive: () -> boolean,
-	onElimination: (victim: any, attacker: any?, zone: Config.Zone?) -> (),
+	onElimination: (victim: any, attacker: any?, zone: Config.Zone?, weapon: string?) -> (),
 	boundsMin: Vector3,
 	boundsMax: Vector3,
 }
