@@ -175,7 +175,7 @@ function PracticeRange.new(info: RangeInfo, lobbyMin: Vector3, lobbyMax: Vector3
 	end
 
 	Net.Practice.OnServerEvent:Connect(function(player, action)
-		if action == "Leave" and Net.allow(player, "Practice", 4, 2) then
+		if Net.allow(player, "Practice", 4, 2) and action == "Leave" then
 			leave(player)
 		end
 	end)

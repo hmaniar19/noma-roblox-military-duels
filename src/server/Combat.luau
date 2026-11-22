@@ -52,9 +52,12 @@ end
 Combat.occlusion = occlusion
 Combat.fxFolder = fxFolder
 
+local function headAt(cf: CFrame, crouched: boolean): Vector3
+	return (cf * CFrame.new(if crouched then Config.CrouchHitboxes[1].offset else HEAD_OFFSET)).Position
+end
+
 function Combat.headPosition(c: Combatant): Vector3
-	local offset = if c.stance == "Crouch" then Config.CrouchHitboxes[1].offset else HEAD_OFFSET
-	return (c.root.CFrame * CFrame.new(offset)).Position
+	return headAt(c.root.CFrame, c.stance == "Crouch")
 end
 
 function Combat.dropShield(c: Combatant)
@@ -288,13 +291,22 @@ function Combat.notify(attacker: Combatant, target: Combatant, zone: Config.Zone
 	end
 end
 
+local ORIGIN_SAMPLES: { number } = { 0.1, 0.2, 0.35 }
+local MAX_SPEED = math.max(Config.SprintSpeed, Config.SlideSpeed) * 1.25
+
 -- Validates a shot claim from a player. Returns the reason it was rejected, or nil.
 -- Call after AntiCheat.validate so the root (and so the head) is a position the server accepted.
+-- The client fired from where it was up to a ping ago, so the origin is compared with the nearest of
+-- the current and recently rewound heads, plus what its current speed covers in that window.
 local function rejectClaim(c: Combatant, origin: Vector3, dir: Vector3): string?
-	local head = Combat.headPosition(c)
 	local player = c.player :: Player
-	local slack = AC.MaxOriginOffset + Config.WalkSpeed * math.min(player:GetNetworkPing(), AC.MaxRewind)
-	local offset = (origin - head).Magnitude
+	local speed = math.min(c.root.AssemblyLinearVelocity.Magnitude, MAX_SPEED)
+	local slack = AC.MaxOriginOffset + speed * math.min(player:GetNetworkPing(), AC.MaxRewind)
+	local offset = (origin - Combat.headPosition(c)).Magnitude
+	for _, t in ORIGIN_SAMPLES do
+		local cf, crouched = Combatants.rewound(c, math.min(t, AC.MaxRewind))
+		offset = math.min(offset, (origin - headAt(cf, crouched)).Magnitude)
+	end
 	if offset > slack then
 		return `shot origin {math.floor(offset)} studs from validated head`
 	end
@@ -410,6 +422,8 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 		local hitWall = victim == nil and wallHit ~= nil
 		Net.ShotFx:FireAllClients(c.model, origin, origin + dir * dist, hitWall, false, pellet == 1)
 		if victim and zone then
+			-- Before damage: a killing hit may start the bullet cam, which reads these.
+			c.lastShotFrom, c.lastShotHit = origin, origin + dir * dist
 			local hitZone = zone :: Config.Zone
 			local amount = Hitbox.damage(w, hitZone, dist)
 			local killed = Combat.damage(victim, amount, c, hitZone, id, true)

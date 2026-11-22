@@ -155,13 +155,17 @@ builders.BulletCam = function(s, data)
 	end
 end
 
+-- The server stages the shot clear of cover: `camera` is its start, `focus` the point it frames, and
+-- `overhead` marks the fallback that looks straight down on the pair.
 builders.Finisher = function(s, data, length)
-	local winnerPos: Vector3 = data.winnerPos
-	local defeatedPos: Vector3 = data.defeatedPos
-	local focus: Vector3 = data.focus
-	local side = flatSide(defeatedPos - winnerPos)
-	local base = focus + side * 10 + Vector3.new(0, -1.3, 0)
-	local target = focus + Vector3.new(0, 1.2, 0)
+	local camera: Vector3 = data.camera
+	local target: Vector3 = data.focus
+	local lost: Vector3, won: Vector3 = data.defeatedPos, data.winnerPos
+	local axis = (lost - won) * Vector3.new(1, 0, 1)
+	-- Looking straight down, the top of the screen points from the victor toward the defeated player.
+	local up = if not data.overhead then Vector3.yAxis elseif axis.Magnitude > 0.1 then axis.Unit else Vector3.zAxis
+	local offset = target - camera
+	local push = if offset.Magnitude > 1 then offset.Unit * 0.8 else Vector3.zero
 	local ink: Color3 = if typeof(data.ink) == "Color3" then data.ink else INK_RED
 
 	for i = 1, 36 do
@@ -222,8 +226,8 @@ builders.Finisher = function(s, data, length)
 
 	return function(t)
 		local e = 1 - (1 - math.clamp(t / 0.45, 0, 1)) ^ 3
-		local pos = base - side * 0.8 * math.clamp(t / length, 0, 1)
-		return CFrame.lookAt(pos, target) * CFrame.Angles(0, 0, math.rad(-10 * e)), 70 - 32 * e
+		local pos = camera + push * math.clamp(t / length, 0, 1)
+		return CFrame.lookAt(pos, target, up) * CFrame.Angles(0, 0, math.rad(-10 * e)), 70 - 32 * e
 	end
 end
 

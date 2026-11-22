@@ -3,8 +3,8 @@
 -- Camp More Maniar lobby; everyone who queues for the same map and mode plays together (bots fill
 -- empty slots). A match is first to 5 round wins. Each round:
 -- an 8-second freeze to pick a loadout, 2:00 live, then a win, loss or draw. Sides swap every round;
--- at 4-4 each team plays Sudden Death with one sniper and one knife. A player who leaves is replaced
--- by a bot and the match counts as their loss; a team with no players left forfeits. After the match
+-- at 4-4 each team plays Sudden Death with one sniper and one knife. A player who leaves or concedes is
+-- replaced by a bot and the match counts as their loss; a team with no players left forfeits. After the match
 -- everyone returns to the lobby. A player in Bot Bootcamp only ever plays alone against perfect bots.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -44,6 +44,7 @@ export type Arena = {
 	id: string,
 	join: (player: Player, mode: string) -> (),
 	leave: (player: Player) -> (), -- leaving the queue, or the game mid-match
+	concede: (player: Player) -> (), -- giving up mid-match (the round-end screen): a loss, then the lobby
 	loadoutChanged: (player: Player) -> (),
 }
 
@@ -173,8 +174,9 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 					attacker = attacker,
 					weapon = weapon,
 					victim = victim,
-					from = Combat.headPosition(attacker),
-					to = Combat.headPosition(victim),
+					-- The decisive pellet's real path (Combat.fire records it first), else head to head.
+					from = gun and attacker.lastShotFrom or Combat.headPosition(attacker),
+					to = gun and attacker.lastShotHit or Combat.headPosition(victim),
 				}
 			end
 			latchIfWiped()
@@ -265,16 +267,20 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	local cutsceneToken = 0
 	local waiting: { [Player]: boolean } = {}
 	Net.CutsceneDone.OnServerEvent:Connect(function(player, t)
+		-- Charged before any check, so malformed or stale acknowledgments still cost the sender.
 		if
-			type(t) == "number"
+			Net.allow(player, "CutsceneDone", 4, 4)
+			and type(t) == "number"
 			and t == cutsceneToken
 			and waiting[player]
-			and Net.allow(player, "CutsceneDone", 4, 4)
 		then
 			waiting[player] = nil
 		end
 	end)
 	local function cutscene(kind: string, data: { [string]: any }, seconds: number)
+		if forfeit then
+			return -- the match is already over
+		end
 		cutsceneToken += 1
 		data.token, data.seconds = cutsceneToken, seconds
 		table.clear(waiting)
@@ -286,7 +292,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		end
 		local started = os.clock()
 		local deadline = started + seconds + Config.CutsceneGraceSeconds
-		while os.clock() < deadline do
+		while os.clock() < deadline and not forfeit do
 			for player in waiting do
 				if player.Parent == nil then
 					waiting[player] = nil
@@ -338,8 +344,37 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		local params = RaycastParams.new()
 		params.FilterType = Enum.RaycastFilterType.Exclude
 		params.FilterDescendantsInstances = characters()
+		local function clear(from: Vector3, to: Vector3): boolean
+			return workspace:Raycast(from, to - from, params) == nil
+		end
 		local floor = workspace:Raycast(at + Vector3.new(0, 4, 0), Vector3.new(0, -20, 0), params)
-		local stand = Vector3.new(at.X, (if floor then floor.Position.Y else at.Y - 1) + 3, at.Z) + dir * 3.5
+		local base = Vector3.new(at.X, (if floor then floor.Position.Y else at.Y - 1) + 3, at.Z)
+		local lift = Vector3.new(0, 1.2, 0) -- the camera aims this far above the pair's midpoint
+		-- Eight angles around the defeated player, nearest the victor's side first: the victor needs open
+		-- floor 3.5 studs out and the camera, 10 studs to either side, a clear view of both. Failing
+		-- that, the victor stands as far out as cover allows and the camera looks straight down.
+		local function stage(): (Vector3, Vector3, boolean)
+			for _, step in { 0, 1, -1, 2, -2, 3, -3, 4 } do
+				local d = CFrame.Angles(0, step * math.pi / 4, 0):VectorToWorldSpace(dir)
+				local spot = base + d * 3.5
+				if clear(at, at + d * 4.5) and not clear(spot, spot - Vector3.new(0, 6, 0)) then
+					local mid = (spot + at) / 2
+					local right = d:Cross(Vector3.yAxis)
+					for _, side in { right, -right } do
+						local camera = mid + side * 10 - Vector3.new(0, 1.3, 0)
+						if clear(mid + lift, camera) then
+							return spot, camera, false
+						end
+					end
+				end
+			end
+			local wall = workspace:Raycast(at, dir * 4.5, params)
+			local spot = base + dir * (if wall then math.max(wall.Distance - 1, 1.5) else 3.5)
+			local target = (spot + at) / 2 + lift
+			local roof = workspace:Raycast(target, Vector3.new(0, 14, 0), params)
+			return spot, target + Vector3.new(0, if roof then math.max(roof.Distance - 1, 2) else 14, 0), true
+		end
+		local stand, camera, overhead = stage()
 		victor.root.Anchored = true
 		victor.root.CFrame = CFrame.lookAt(stand, Vector3.new(at.X, stand.Y, at.Z))
 		cutscene("Finisher", {
@@ -349,7 +384,9 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			defeatedName = defeated.name,
 			winnerPos = stand,
 			defeatedPos = at,
-			focus = (stand + at) / 2,
+			focus = (stand + at) / 2 + lift,
+			camera = camera,
+			overhead = overhead,
 		}, 3.2)
 		return true
 	end
@@ -648,7 +685,10 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			end
 			banner("RoundEnd", { winner = result, detail = lastElimination, cutscene = true })
 			if not roundCutscenes(result :: Result) then
-				task.wait(Config.RoundEndSeconds)
+				local resume = os.clock() + Config.RoundEndSeconds
+				while os.clock() < resume and not forfeit do -- a concede here ends the match at once
+					task.wait(0.1)
+				end
 			end
 		end
 
@@ -788,7 +828,8 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		return true
 	end
 
-	local arena: Arena = {
+	local arena: Arena
+	arena = {
 		id = id,
 		join = function(player, mode)
 			if table.find(queue, player) then
@@ -846,6 +887,20 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			end
 			if not teamHasPlayer then
 				forfeit = entry.team
+			end
+		end,
+		-- The same saved loss as leaving the game (a team left with no players forfeits the match at
+		-- once), then straight back to the lobby. Once the result is decided there is nothing to concede.
+		concede = function(player)
+			local entry = inRoster(player)
+			local c = entry and entry.combatant
+			arena.leave(player)
+			if entry and entry.player == nil then
+				if c and c.player == player then
+					Combatants.remove(c) -- so it no longer answers for this player in the lobby
+				end
+				waiting[player] = nil -- the scene in progress no longer waits on them
+				task.spawn(toLobby, player)
 			end
 		end,
 		-- Picks made during the freeze show up immediately (the screen previews the real kit).

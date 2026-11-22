@@ -94,7 +94,8 @@ function Lobby.run(world: World.World)
 				return
 			end
 			if typeof(player:GetAttribute("Coins")) ~= "number" then
-				return -- profile still loading
+				Net.Toast:FireClient(player, "Profile loading", "Your profile is still loading. Try again in a moment.")
+				return
 			end
 			target = arenas[mapId]
 		elseif action ~= "Leave" then
@@ -104,7 +105,13 @@ function Lobby.run(world: World.World)
 			range.leave(player) -- queueing ends practice
 		end
 		if player:GetAttribute("Arena") ~= nil then
-			return -- already in a match
+			local playing = arenaOf(player, "Arena")
+			if playing and action == "Leave" then
+				playing.concede(player) -- a saved loss, then back to Camp More Maniar
+			else
+				Net.Toast:FireClient(player, "Already in a match", "Finish or leave your match before queueing.")
+			end
+			return
 		end
 		local current = arenaOf(player, "Queued")
 		if current then

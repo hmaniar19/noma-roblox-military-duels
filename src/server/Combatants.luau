@@ -38,6 +38,8 @@ export type Combatant = {
 	reloadToken: number,
 	reloading: boolean,
 	lastShot: number,
+	lastShotFrom: Vector3?, -- the last pellet that hit a combatant: shooter's eye and rewound contact
+	lastShotHit: Vector3?,
 	aiming: boolean,
 	shieldUntil: number,
 	historyT: { number },

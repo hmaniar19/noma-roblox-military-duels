@@ -45,6 +45,32 @@ local function panel(title: string, y: number): (Frame, TextLabel)
 	local pad = Instance.new("UIPadding")
 	pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 12), UDim.new(0, 12)
 	pad.Parent = f
+	-- Small windows scale the panel down; it hangs from `y`, so its height must fit in the room below.
+	local fit = Instance.new("UIScale")
+	fit.Parent = f
+	local function refit()
+		local camera = workspace.CurrentCamera
+		if camera and f.AbsoluteSize.Y > 0 then
+			local viewport, height = camera.ViewportSize, f.AbsoluteSize.Y / fit.Scale
+			local scale = math.min(1, (viewport.X - 40) / 940, (viewport.Y * (1 - y) - 20) / height)
+			-- A threshold, so the AbsoluteSize change this causes doesn't refit again on rounding noise.
+			if math.abs(scale - fit.Scale) > 0.01 then
+				fit.Scale = math.max(scale, 0.3)
+			end
+		end
+	end
+	local viewportConn: RBXScriptConnection?
+	local function watchCamera()
+		if viewportConn then
+			viewportConn:Disconnect()
+		end
+		local camera = workspace.CurrentCamera
+		viewportConn = camera and camera:GetPropertyChangedSignal("ViewportSize"):Connect(refit)
+		refit()
+	end
+	workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(watchCamera)
+	f:GetPropertyChangedSignal("AbsoluteSize"):Connect(refit) -- rows show and hide (Sudden Death)
+	watchCamera()
 	local heading = Instance.new("TextLabel")
 	heading.Size = UDim2.fromOffset(920, 30)
 	heading.BackgroundTransparency = 1

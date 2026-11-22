@@ -36,7 +36,8 @@ gui.DisplayOrder = 4
 gui.IgnoreGuiInset = true
 gui.Parent = player:WaitForChild("PlayerGui")
 
--- The bar is laid out for 1340 px; narrower windows scale the whole screen down so nothing overlaps.
+-- The bar is laid out for 1340 px and the modals for ~560 px of height; smaller windows scale the whole
+-- screen down so nothing overlaps or runs off the edge.
 local BAR_WIDTH = 1340
 local fit = Instance.new("UIScale")
 fit.Parent = gui
@@ -44,7 +45,8 @@ local viewportConn: RBXScriptConnection?
 local function refit()
 	local camera = workspace.CurrentCamera
 	if camera then
-		fit.Scale = math.min(1, camera.ViewportSize.X / (BAR_WIDTH + 40))
+		local viewport = camera.ViewportSize
+		fit.Scale = math.min(1, viewport.X / (BAR_WIDTH + 40), (viewport.Y - 40) / 560)
 	end
 end
 local function watchCamera()
@@ -103,6 +105,9 @@ end
 local bar = frame(gui, UDim2.fromOffset(BAR_WIDTH, 150), UDim2.new(0.5, 0, 1, -16), Vector2.new(0.5, 1))
 local status = label(gui, UDim2.fromOffset(900, 30), UDim2.new(0.5, -450, 1, -200), 20)
 status.TextStrokeTransparency = 0.4
+local soloHint = label(gui, UDim2.fromOffset(900, 22), UDim2.new(0.5, -450, 1, -224), 15, BODY)
+soloHint.Text = `Solo? Queue 1v1, a bot joins in {Config.QueueSeconds} s.`
+soloHint.TextStrokeTransparency = 0.4
 
 local selectedMap = Config.Maps[1].id
 local selectedMode = "1v1"
@@ -140,13 +145,15 @@ end)
 rankedButton.TextSize = 15
 
 local play = button(bar, UDim2.fromOffset(190, 126), UDim2.new(1, -332, 0, 12), "PLAY", function()
-	if player:GetAttribute("Queued") then
+	if typeof(player:GetAttribute("Coins")) ~= "number" then
+		return -- profile still loading (the button says so)
+	elseif player:GetAttribute("Queued") then
 		QueueRemote:FireServer("Leave")
 	else
 		QueueRemote:FireServer("Join", selectedMap, selectedMode)
 	end
 end)
-play.TextSize = 32
+play.TextSize, play.TextWrapped = 32, true
 
 local shopPanel: Frame, inventoryPanel: Frame
 local shopButton = button(bar, UDim2.fromOffset(120, 59), UDim2.new(1, -132, 0, 12), "SHOP", function()
@@ -431,7 +438,7 @@ for i, id in Config.Starter.Colors do
 		end
 	end
 end
-local confirm = button(starterPanel, UDim2.fromOffset(220, 50), UDim2.new(0.5, -110, 1, -66), "CONFIRM", function()
+local confirm = button(starterPanel, UDim2.fromOffset(220, 50), UDim2.new(0.5, -230, 1, -66), "CONFIRM", function()
 	-- The panel hides once the server sets StarterPicked; until then a retry is allowed every 3 s.
 	if os.clock() - starterSentAt >= 3 then
 		SettingsRemote:FireServer("Starter", starterWeapon, starterColor)
@@ -439,6 +446,40 @@ local confirm = button(starterPanel, UDim2.fromOffset(220, 50), UDim2.new(0.5, -
 	end
 end)
 confirm.BackgroundColor3 = GO
+
+-- Quick start from either first-join picker: default theme, first starter, then a 1v1 on the first map.
+local function quickStart()
+	if player:GetAttribute("ThemePicked") == false then
+		SettingsRemote:FireServer("Theme", Theme.current().id)
+	end
+	SettingsRemote:FireServer("Starter", Config.Starter.Weapons[1], Config.Starter.Colors[1])
+	starterSentAt = os.clock()
+	settingsPanel.Visible = false
+	selectedMap, selectedMode = Config.Maps[1].id, "1v1"
+	QueueRemote:FireServer("Join", selectedMap, selectedMode)
+end
+local quickSize, quickText = UDim2.fromOffset(300, 50), "USE DEFAULTS & PLAY"
+local themeDefaults = button(settingsPanel, quickSize, UDim2.new(0.5, -150, 1, -62), quickText, quickStart)
+local starterDefaults = button(starterPanel, quickSize, UDim2.new(0.5, 10, 1, -66), quickText, quickStart)
+themeDefaults.BackgroundColor3, starterDefaults.BackgroundColor3 = GO, GO
+
+-- In a match: concede (a saved loss, server-side) and go back to Camp More Maniar.
+local leaveBox = frame(gui, UDim2.fromOffset(260, 96), UDim2.new(1, -280, 0, 148))
+leaveBox.Visible = false
+label(leaveBox, UDim2.new(1, -16, 0, 30), UDim2.fromOffset(8, 6), 16).Text = "Leaving counts as a loss."
+local leaveMatch = button(gui, UDim2.fromOffset(150, 34), UDim2.new(1, -170, 0, 108), "LEAVE MATCH", function()
+	leaveBox.Visible = not leaveBox.Visible
+end)
+leaveMatch.TextSize, leaveMatch.BackgroundColor3 = 14, STOP
+local leaveYes = button(leaveBox, UDim2.fromOffset(114, 40), UDim2.fromOffset(10, 46), "LEAVE", function()
+	leaveBox.Visible = false
+	QueueRemote:FireServer("Leave")
+end)
+local leaveNo = button(leaveBox, UDim2.fromOffset(114, 40), UDim2.fromOffset(136, 46), "STAY", function()
+	leaveBox.Visible = false
+end)
+leaveYes.BackgroundColor3 = STOP
+leaveYes.Modal, leaveNo.Modal = true, true -- frees the first-person mouse while the confirm is up
 
 -- Toasts --------------------------------------------------------------------------------------------
 local toast = frame(gui, UDim2.fromOffset(520, 70), UDim2.new(0.5, 0, 0, 70), Vector2.new(0.5, 0))
@@ -477,12 +518,17 @@ RunService.RenderStepped:Connect(function()
 	local arena = player:GetAttribute("Arena")
 	local inLobby = arena == nil
 	local practicing = arena == "Practice"
+	local firstTheme = player:GetAttribute("ThemePicked") == false
+	local inMatch = arena ~= nil and not practicing
 	bar.Visible = inLobby
 	status.Visible = inLobby or practicing
+	soloHint.Visible = inLobby and not player:GetAttribute("Queued")
 	settingsButton.Visible, emotesButton.Visible, levelBox.Visible = inLobby, inLobby, inLobby
-	starterPanel.Visible = inLobby
-		and player:GetAttribute("StarterPicked") == false
-		and player:GetAttribute("ThemePicked") ~= false
+	settingsPanel.Size = UDim2.fromOffset(840, if firstTheme then 400 else 330)
+	themeDefaults.Visible = firstTheme
+	starterPanel.Visible = inLobby and player:GetAttribute("StarterPicked") == false and not firstTheme
+	leaveMatch.Visible = inMatch
+	leaveBox.Visible = leaveBox.Visible and inMatch
 	confirm.Text = if os.clock() - starterSentAt < 3 then "SAVING..." else "CONFIRM"
 	leaveRange.Visible = practicing
 	if practicing then
@@ -542,10 +588,13 @@ RunService.RenderStepped:Connect(function()
 			then `Queued for {mapName} ({mode}) · starting {clock((a :: Instance):GetAttribute("StartsAt"), now)}`
 			elseif phase == "Waiting" then `Queued for {mapName} ({mode})`
 			else `Queued for {mapName} · the current match there finishes first`
-		play.Text, play.BackgroundColor3 = "LEAVE", STOP
+		play.Text, play.BackgroundColor3, play.TextSize = "LEAVE", STOP, 32
 	else
 		status.Text = "Pick a map and a mode, then press PLAY. Players on the same map play each other."
-		play.Text, play.BackgroundColor3 = "PLAY", GO
+		local ready = typeof(player:GetAttribute("Coins")) == "number"
+		play.Text = if ready then "PLAY" else "LOADING PROFILE..."
+		play.BackgroundColor3 = if ready then GO else IDLE
+		play.AutoButtonColor, play.TextSize = ready, if ready then 32 else 20
 	end
 	if shopPanel.Visible or inventoryPanel.Visible then
 		local owned = ownedSet()
