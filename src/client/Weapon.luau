@@ -64,10 +64,10 @@ local fxFolder = Instance.new("Folder")
 fxFolder.Name = "LocalFx"
 fxFolder.Parent = workspace
 
-local function sound(id: string, parent: Instance, volume: number)
+local function sound(id: string, parent: Instance, volume: number, speed: number?)
 	local s = Instance.new("Sound")
 	s.SoundId = id
-	s.Volume = volume
+	s.Volume, s.PlaybackSpeed = volume, speed or 1
 	s.Parent = parent
 	s:Play()
 	s.Ended:Once(function()
@@ -84,6 +84,28 @@ Weapon.sound = sound
 function Weapon.current(): (Config.WeaponId?, Config.Weapon?)
 	local id = player:GetAttribute("Weapon") :: Config.WeaponId?
 	return id, if id then Config.Weapons[id] else nil
+end
+
+-- The shot cue for a weapon's class: shotgun, sniper, automatic rifle or semi-automatic pistol.
+local function shotCue(w: Config.Weapon?): { id: string, speed: number }
+	local cues = Config.Sounds
+	if not w then
+		return cues.ShotRifle
+	end
+	return if w.pellets > 1
+		then cues.ShotShotgun
+		elseif w.scoped then cues.ShotSniper
+		elseif w.auto then cues.ShotRifle
+		else cues.ShotPistol
+end
+
+local function weaponNamed(name: string): Config.Weapon?
+	for _, w in Config.Weapons do
+		if w.name == name then
+			return w
+		end
+	end
+	return nil
 end
 
 -- Fighting right now: on a team, alive, not on the match-win celebration stage, and not watching a
@@ -212,6 +234,15 @@ local function setAiming(on: boolean)
 	end
 end
 
+-- The server drops aim on equip and round start; while the button is still held, aim again.
+local aimHeld = false
+local function resyncAim()
+	if aimHeld and Weapon.inCombat() then
+		Weapon.aiming = true
+		Aim:FireServer(true)
+	end
+end
+
 -- Shows a blade's swing trail (Double Trouble) for the length of one swing.
 local function flashTrail(handle: Instance?)
 	local trail = handle and handle:FindFirstChild("SwingTrail")
@@ -253,7 +284,8 @@ local function tryFire()
 	else
 		recoil = math.min(recoil + (if w.pellets > 1 or not w.auto then 1 else 0.35), 1.6)
 		flash.Brightness = 4
-		sound(Config.Sounds.Shot, camera, 0.5)
+		local cue = shotCue(w)
+		sound(cue.id, camera, 0.5, cue.speed)
 	end
 end
 
@@ -305,10 +337,13 @@ Banner.OnClientEvent:Connect(function(kind: string)
 		local camera = workspace.CurrentCamera
 		camera.CFrame = CFrame.lookAt(camera.CFrame.Position, camera.CFrame.Position + root.CFrame.LookVector)
 	end
+	if kind == "RoundStart" then
+		resyncAim()
+	end
 end)
 
 ShotFx.OnClientEvent:Connect(
-	function(shooter: Model, origin: Vector3, hitPos: Vector3, hitWall: boolean, melee: boolean)
+	function(shooter: Model, origin: Vector3, hitPos: Vector3, hitWall: boolean, melee: boolean, cue: boolean)
 		local tool = shooter and shooter:FindFirstChildOfClass("Tool")
 		local handle = tool and tool:FindFirstChild("Handle")
 		if shooter == player.Character then
@@ -317,8 +352,13 @@ ShotFx.OnClientEvent:Connect(
 			end
 			return
 		end
-		if handle then
-			sound(if melee then Config.Sounds.Slash else Config.Sounds.Shot, handle, 0.8)
+		if handle and tool then
+			if cue and melee then
+				sound(Config.Sounds.Slash, handle, 0.8)
+			elseif cue then
+				local c = shotCue(weaponNamed(tool.Name))
+				sound(c.id, handle, 0.8, c.speed)
+			end
 			if melee then
 				flashTrail(handle)
 			end
@@ -354,6 +394,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		firing = true
 		tryFire()
 	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+		aimHeld = true
 		setAiming(true)
 	elseif KEY_SLOTS[input.KeyCode] then
 		equipSlot(KEY_SLOTS[input.KeyCode])
@@ -395,6 +436,7 @@ UserInputService.InputEnded:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then
 		firing = false
 	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+		aimHeld = false
 		setAiming(false)
 	elseif input.KeyCode == Enum.KeyCode.LeftShift and player:GetAttribute("Stance") == "Sprint" then
 		Stance:FireServer("Stand")
@@ -471,6 +513,8 @@ RunService.RenderStepped:Connect(function(dt: number)
 	end
 	if id ~= vmId then
 		refreshViewmodel(id)
+		aimBlend = 0 -- a new weapon starts unaimed, so a sniper never flashes its scope on the swap
+		resyncAim()
 	end
 	UserInputService.MouseIconEnabled = Weapon.menuOpen
 	hideTool()
@@ -483,7 +527,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 		Look:FireServer(camera.CFrame.LookVector)
 	end
 
-	Weapon.scoped = w.scoped and aimBlend > 0.9
+	Weapon.scoped = w.scoped and Weapon.aiming and aimBlend > 0.9
 	local reloading = player:GetAttribute("Reloading") == true
 	local healing = player:GetAttribute("Healing") == true
 	aimBlend += ((if Weapon.aiming and w.kind == "gun" and not reloading then 1 else 0) - aimBlend) * math.min(

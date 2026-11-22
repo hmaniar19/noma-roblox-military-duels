@@ -15,6 +15,10 @@ type Combatant = Combatants.Combatant
 
 local B = Config.Bot
 local BODY_OFFSET = Config.Hitboxes[2].offset
+local HEAD_OFFSET = Config.Hitboxes[1].offset
+local ADS_RANGE = 30 -- guns aim down sights past this; hip spread at mid range wastes the burst
+local KNIFE_STOP = 3 -- a knife walks straight in until this close, never strafing
+local KNIFE_REACTION = 0.25
 
 -- Roblox's default R15 animations; bots have no client to run the Animate script.
 local ANIMS: { [string]: string } = {
@@ -59,10 +63,12 @@ local function animate(humanoid: Humanoid)
 	end)
 end
 
-local function visiblePoint(c: Combatant, enemy: Combatant): Vector3?
+-- The first visible hitbox point (body first, or head first for a perfect bot's head shots).
+local function visiblePoint(c: Combatant, enemy: Combatant, headFirst: boolean): Vector3?
 	local eye = Combat.headPosition(c)
 	local params = Combat.occlusion()
-	for _, offset in { BODY_OFFSET, Config.Hitboxes[1].offset } do
+	local order: { Vector3 } = if headFirst then { HEAD_OFFSET, BODY_OFFSET } else { BODY_OFFSET, HEAD_OFFSET }
+	for _, offset in order do
 		local point = (enemy.root.CFrame * CFrame.new(offset)).Position
 		if not workspace:Raycast(eye, point - eye, params) and not Gadgets.smokeBlocks(eye, point, c.arena.id) then
 			return point
@@ -72,9 +78,13 @@ local function visiblePoint(c: Combatant, enemy: Combatant): Vector3?
 end
 
 -- Runs until the bot dies or the round ends. `enemies` returns the living opponents. A `perfect` bot
--- (Bot Bootcamp) reacts fast, never misses, never pauses between bursts, and snipes for the head.
+-- (Bot Bootcamp) reacts fast, aims for a visible head with every gun, has no spread (Combat), never
+-- pauses between bursts, and strafes less.
 function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatant }, perfect: boolean?)
 	local reaction = if perfect then B.PerfectReactionTime else B.ReactionTime
+	if perfect then
+		c.perfect = true
+	end
 	local humanoid, root = c.humanoid, c.root
 	animate(humanoid)
 	local seenSince: number? = nil
@@ -86,6 +96,10 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 	local stuck, wasRetreating = false, false
 	local pathOnlyUntil = 0 -- after snagging while closing in, follow a path for a moment
 	local woundedUntil: number? = nil -- one 4-second fall-back per life when health first drops low
+	-- Searching for a hidden enemy: the waypoint being walked to, and those already reached or
+	-- blocked without seeing them (cleared on sight, or once all are tried).
+	local lastGoal: number? = nil
+	local tried: { [number]: boolean } = {}
 
 	while c.alive and root.Parent do
 		local now = os.clock()
@@ -96,12 +110,15 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 		end
 
 		-- Nearest enemy it can see; if none are visible, the nearest one to hunt.
+		local id = Combatants.weapon(c)
+		local w = if id then Config.Weapons[id] else nil
+		local melee = w ~= nil and w.kind == "melee"
 		local target: Combatant? = nil
 		local spot: Vector3? = nil
 		local best = math.huge
 		for _, e in enemies() do
 			local d = (e.root.Position - root.Position).Magnitude
-			local seen = visiblePoint(c, e)
+			local seen = visiblePoint(c, e, perfect == true and not melee)
 			if (seen and not spot) or ((seen ~= nil) == (spot ~= nil) and d < best) then
 				target, spot, best = e, seen, d
 			end
@@ -112,8 +129,6 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 			continue
 		end
 
-		local id = Combatants.weapon(c)
-		local w = if id then Config.Weapons[id] else nil
 		if not woundedUntil and humanoid.Health < B.RetreatHealth then
 			woundedUntil = now + 4
 		end
@@ -126,13 +141,15 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 		end
 		if spot and w and not retreating and now >= pathOnlyUntil then
 			-- Engage: face the enemy, close to the weapon's range or strafe, and fire after a human-like
-			-- reaction delay (bursts for automatics).
+			-- reaction delay (bursts for automatics). A knife walks straight in and swings on contact.
 			seenSince = seenSince or now
+			lastGoal = nil
+			table.clear(tried)
 			humanoid.AutoRotate = false
 			local flat = Vector3.new(target.root.Position.X, root.Position.Y, target.root.Position.Z)
 			root.CFrame = CFrame.lookAt(root.Position, flat)
 			if now > strafeUntil then
-				strafe = if rng:NextNumber() < 0.5 then -1 else 1
+				strafe = if perfect and rng:NextNumber() < 0.6 then 0 elseif rng:NextNumber() < 0.5 then -1 else 1
 				strafeUntil = now + rng:NextNumber(0.6, 1.4)
 			end
 			-- Draw the sidearm when the primary can't reach, and back when it can.
@@ -141,37 +158,42 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 			if c.equipped ~= wantSlot and not c.reloading then
 				Combat.equip(c, wantSlot)
 			end
-			if best > w.botRange then
+			if best > (if melee then KNIFE_STOP else w.botRange) then
 				humanoid:MoveTo(target.root.Position)
-				-- Walking straight at a visible enemy can snag on low cover: path around it instead.
-				if (root.Position - lastPos).Magnitude > 1.5 then
+				-- Walking straight at a visible enemy can snag on low cover: path around it instead. A
+				-- knife pressing into its target isn't snagged.
+				if (root.Position - lastPos).Magnitude > 1.5 or (melee and best < 6) then
 					lastPos, stuckSince = root.Position, now
 				elseif now - stuckSince > 1.5 then
 					pathOnlyUntil, nextPath, stuckSince = now + 2.5, 0, now
 				end
 			else
-				humanoid:Move(root.CFrame.RightVector * strafe)
+				humanoid:Move(if melee then Vector3.zero else root.CFrame.RightVector * strafe)
 			end
-			c.aiming = w.kind == "gun" and (best > 60 or w.scoped)
+			c.aiming = not melee and (best > ADS_RANGE or w.scoped)
 			humanoid.WalkSpeed = if c.aiming then Config.AimWalkSpeed else Config.WalkSpeed
-			local inReach = best <= (if w.kind == "melee" then w.range else w.botRange * 2.5)
-			if inReach and now - (seenSince :: number) >= reaction and now >= nextShot then
-				local headChance = if perfect and w.scoped then 1 else B.HeadshotChance
-				local aimAt = if rng:NextNumber() < headChance
-					then (target.root.CFrame * CFrame.new(Config.Hitboxes[1].offset)).Position
-					else spot
-				local eye = Combat.headPosition(c)
-				-- Human-like misses: aim starts rough and settles over the first moments on a target,
-				-- and a running target is harder to track.
+			local eye = Combat.headPosition(c)
+			local aimAt = if not perfect
+					and not melee
+					and rng:NextNumber() < B.HeadshotChance
+				then (target.root.CFrame * CFrame.new(HEAD_OFFSET)).Position
+				else spot
+			local inReach = if melee then (aimAt - eye).Magnitude <= w.range else best <= w.botRange * 2.5
+			local react = if melee then math.min(reaction, KNIFE_REACTION) else reaction
+			if inReach and now - (seenSince :: number) >= react and now >= nextShot then
+				-- Human-like misses, as a lateral offset at the target so the hit rate holds at range:
+				-- aim starts rough and settles over the first moments, and a running target is harder.
 				local settle = 1 + math.max(0, B.AimSettleSeconds - (now - (seenSince :: number))) / B.AimSettleSeconds
 				local v = target.root.AssemblyLinearVelocity
 				local running = if Vector3.new(v.X, 0, v.Z).Magnitude > 10 then B.MovingTargetPenalty else 1
-				local err = (if perfect then 0 else B.AimErrorDegrees)
-					* (1 + best / 120)
-					* settle
-					* running
-					* (if w.scoped then B.SniperAimScale else 1)
-				Combat.fire(c, eye, Hitbox.spread((aimAt - eye).Unit, err, rng))
+				local miss = if perfect or melee
+					then 0
+					else math.min(B.AimMissCap, B.AimMissStuds * (1 + best / B.AimMissRange))
+						* settle
+						* running
+						* (if w.scoped then B.SniperAimScale else 1)
+				local toAim = aimAt - eye
+				Combat.fire(c, eye, Hitbox.spread(toAim.Unit, math.deg(math.atan2(miss, toAim.Magnitude)), rng))
 				burstLeft -= 1
 				nextShot = now + w.fireInterval + (if w.auto then 0 else 0.2)
 				if w.auto and burstLeft <= 0 and not perfect then
@@ -188,20 +210,46 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 			humanoid.WalkSpeed = Config.WalkSpeed
 			if now >= nextPath then
 				nextPath = now + 1.5
-				local goal, goalDist = waypoints[rng:NextInteger(1, #waypoints)], math.huge
-				if not stuck then
-					local enemyEye = Combat.headPosition(target)
-					for _, point in waypoints do
-						local hidden = retreating
-							and workspace:Raycast(enemyEye, point + Vector3.new(0, 2, 0) - enemyEye, Combat.occlusion())
-						local d = if retreating
-							then (point - root.Position).Magnitude
-							else (point - target.root.Position).Magnitude
-						if (hidden or not retreating) and d < goalDist then
-							goal, goalDist = point, d
+				local goal = waypoints[rng:NextInteger(1, #waypoints)]
+				if retreating then
+					if not stuck then
+						local enemyEye, goalDist = Combat.headPosition(target), math.huge
+						for _, point in waypoints do
+							local d = (point - root.Position).Magnitude
+							if
+								d < goalDist
+								and workspace:Raycast(
+									enemyEye,
+									point + Vector3.new(0, 2, 0) - enemyEye,
+									Combat.occlusion()
+								)
+							then
+								goal, goalDist = point, d
+							end
 						end
 					end
-					if not retreating and (goal - root.Position).Magnitude < 8 then
+				else
+					-- Sweep the cover points nearest the enemy, pushing for the enemy from each one reached.
+					-- One reached or blocked without seeing them isn't picked again.
+					if stuck and lastGoal then
+						tried[lastGoal] = true
+					end
+					local pick: number?, pickDist = nil, math.huge
+					for i, point in waypoints do
+						local d = (point - target.root.Position).Magnitude
+						if not tried[i] and d < pickDist then
+							pick, pickDist = i, d
+						end
+					end
+					lastGoal = nil
+					if not pick then
+						table.clear(tried)
+					elseif (waypoints[pick] - root.Position).Magnitude >= 8 then
+						goal, lastGoal = waypoints[pick], pick
+					else
+						tried[pick] = true
+					end
+					if not stuck and not lastGoal then
 						goal = target.root.Position
 					end
 				end
@@ -226,7 +274,7 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 			if (root.Position - lastPos).Magnitude > 1.5 then
 				lastPos, stuckSince = root.Position, now
 			elseif now - stuckSince > 1.5 then
-				-- Blocked: jump, and route to a random cover point instead of the same goal.
+				-- Blocked: jump, and route somewhere other than the same goal.
 				humanoid.Jump = true
 				stuck, nextPath, stuckSince = true, 0, now
 			end

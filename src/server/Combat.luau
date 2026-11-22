@@ -151,7 +151,8 @@ function Combat.equip(c: Combatant, index: number)
 	c.equipped = index
 	c.reloadToken += 1 -- switching cancels a reload
 	c.reloading = false
-	c.aiming = false
+	-- Aim survives a swap to another aimable weapon; the client resends Aim if its state differs.
+	c.aiming = c.aiming and Config.Weapons[id].kind ~= "melee"
 	Combat.applySpeed(c)
 	for _, child in c.model:GetChildren() do
 		if child:IsA("Tool") then
@@ -316,8 +317,8 @@ local function trace(
 	local victimDist = maxDist
 	for _, other in Combatants.all() do
 		if other ~= c and other.arena == c.arena and other.alive and other.team ~= c.team then
-			local zone: Config.Zone?, dist: number? =
-				Hitbox.cast(origin, dir, maxDist, Combatants.rewound(other, rewind), other.stance == "Crouch")
+			local cf, crouched = Combatants.rewound(other, rewind)
+			local zone: Config.Zone?, dist: number? = Hitbox.cast(origin, dir, maxDist, cf, crouched)
 			if zone and dist and dist <= victimDist then
 				victim, victimZone, victimDist = other, zone :: Config.Zone, dist
 			end
@@ -380,7 +381,7 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 		-- A stab reaches `range` studs and is stopped by walls. Melee ignores zone multipliers.
 		local wall = workspace:Raycast(origin, aimDir * w.range, occlusion())
 		local victim, zone = trace(c, origin, aimDir, if wall then wall.Distance else w.range, rewind)
-		Net.ShotFx:FireAllClients(c.model, origin, origin, false, true)
+		Net.ShotFx:FireAllClients(c.model, origin, origin, false, true, true)
 		Report.shot(c, origin, aimDir, if victim then victim.name else nil, zone)
 		if victim and zone then
 			Combat.damage(victim, w.damage, c, zone :: Config.Zone, id)
@@ -392,15 +393,18 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 	Combatants.sync(c)
 	local velocity = c.root.AssemblyLinearVelocity
 	local moving = Vector3.new(velocity.X, 0, velocity.Z).Magnitude > 3
-	local spread = (if c.aiming then w.spreadAim else w.spreadHip) + (if moving then w.spreadMoving else 0)
+	local spread = if c.perfect
+		then 0
+		else (if c.aiming then w.spreadAim else w.spreadHip) + (if moving then w.spreadMoving else 0)
 	local RANK = { Head = 3, Body = 2, Legs = 1 }
 	local dealt: { [Combatant]: number } = {}
 	local bestZone: Config.Zone?, anyKilled, firstVictim: string? = nil, false, nil
-	for _ = 1, w.pellets do
+	for pellet = 1, w.pellets do
 		local dir = Hitbox.spread(aimDir, spread, rng)
 		local wallHit = workspace:Raycast(origin, dir * w.range, occlusion())
 		local victim, zone, dist = trace(c, origin, dir, if wallHit then wallHit.Distance else w.range, rewind)
-		Net.ShotFx:FireAllClients(c.model, origin, origin + dir * dist, victim == nil and wallHit ~= nil, false)
+		local hitWall = victim == nil and wallHit ~= nil
+		Net.ShotFx:FireAllClients(c.model, origin, origin + dir * dist, hitWall, false, pellet == 1)
 		if victim and zone then
 			local hitZone = zone :: Config.Zone
 			local amount = Hitbox.damage(w, hitZone, dist)

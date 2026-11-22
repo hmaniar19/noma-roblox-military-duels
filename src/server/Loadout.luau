@@ -132,8 +132,18 @@ end
 
 function Loadout.bind()
 	Net.Loadout.OnServerEvent:Connect(function(player, kind, value)
+		-- Malformed payloads are dropped, not flagged: AntiCheat requires Economy, which requires Loadout.
 		if not Net.allow(player, "Loadout", 6, 4) or typeof(value) ~= "string" or typeof(kind) ~= "string" then
 			return
+		end
+		local arena = player:GetAttribute("Arena")
+		if arena ~= nil and arena ~= "Practice" then
+			local states = ReplicatedStorage:FindFirstChild("Arenas")
+			local state = states and states:FindFirstChild(tostring(arena))
+			local phase = state and state:GetAttribute("Phase")
+			if phase ~= "Freeze" and phase ~= "Starting" then
+				return
+			end
 		end
 		if Loadout.choose(player, kind, value) then
 			Loadout.onChange(player)

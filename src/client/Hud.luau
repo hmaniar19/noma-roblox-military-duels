@@ -147,7 +147,11 @@ end)
 button(confirmBox, UDim2.new(0, 8, 1, -8), "REPORT", function()
 	local first = next(foes)
 	ReportRemote:FireServer(if first and next(foes, first) == nil then first else nil)
-	confirmBox.Visible, sentUntil = false, os.clock() + 60
+	-- Hidden while the server answers; a dropped (rate-limited) request shows the button again soon.
+	confirmBox.Visible, sentUntil = false, os.clock() + 10
+end)
+ReportRemote.OnClientEvent:Connect(function(ok: boolean)
+	sentUntil = if ok then os.clock() + 60 else 0
 end)
 button(confirmBox, UDim2.new(0, 96, 1, -8), "CANCEL", function()
 	confirmBox.Visible = false

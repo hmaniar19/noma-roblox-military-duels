@@ -42,6 +42,8 @@ export type Combatant = {
 	shieldUntil: number,
 	historyT: { number },
 	historyCF: { CFrame },
+	historyCrouch: { boolean },
+	perfect: boolean?, -- Bootcamp bots: no spread at all
 	looks: { { t: number, dir: Vector3 } },
 	lastGrounded: CFrame,
 	lastCheck: number,
@@ -95,6 +97,7 @@ function Combatants.new(
 		shieldUntil = 0,
 		historyT = {},
 		historyCF = {},
+		historyCrouch = {},
 		looks = {},
 		lastGrounded = spawn,
 		lastCheck = os.clock(),
@@ -185,26 +188,27 @@ function Combatants.teleport(c: Combatant, cf: CFrame)
 	c.lastCheck = os.clock()
 	table.clear(c.historyT)
 	table.clear(c.historyCF)
+	table.clear(c.historyCrouch)
 end
 
--- Where `c` was `secondsAgo` ago, interpolated from recorded history.
-function Combatants.rewound(c: Combatant, secondsAgo: number): CFrame
-	local times, cfs = c.historyT, c.historyCF
+-- Where `c` was `secondsAgo` ago, interpolated from recorded history, and whether it was crouched.
+function Combatants.rewound(c: Combatant, secondsAgo: number): (CFrame, boolean)
+	local times, cfs, crouch = c.historyT, c.historyCF, c.historyCrouch
 	local n = #times
 	if n == 0 or secondsAgo <= 0 then
-		return c.root.CFrame
+		return c.root.CFrame, c.stance == "Crouch"
 	end
 	local t = os.clock() - secondsAgo
 	if t <= times[1] then
-		return cfs[1]
+		return cfs[1], crouch[1]
 	end
 	for i = n, 2, -1 do
 		if times[i - 1] <= t then
-			local a = (t - times[i - 1]) / math.max(times[i] - times[i - 1], 1e-6)
-			return cfs[i - 1]:Lerp(cfs[i], math.clamp(a, 0, 1))
+			local a = math.clamp((t - times[i - 1]) / math.max(times[i] - times[i - 1], 1e-6), 0, 1)
+			return cfs[i - 1]:Lerp(cfs[i], a), if a < 0.5 then crouch[i - 1] else crouch[i]
 		end
 	end
-	return cfs[n]
+	return cfs[n], crouch[n]
 end
 
 RunService.Heartbeat:Connect(function()
@@ -213,9 +217,11 @@ RunService.Heartbeat:Connect(function()
 		if c.alive and c.root.Parent then
 			table.insert(c.historyT, now)
 			table.insert(c.historyCF, c.root.CFrame)
+			table.insert(c.historyCrouch, c.stance == "Crouch")
 			while #c.historyT > 2 and now - c.historyT[1] > HISTORY_SECONDS do
 				table.remove(c.historyT, 1)
 				table.remove(c.historyCF, 1)
+				table.remove(c.historyCrouch, 1)
 			end
 		end
 		local shielded = now < c.shieldUntil

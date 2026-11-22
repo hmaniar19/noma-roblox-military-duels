@@ -437,7 +437,9 @@ local Config = {
 		Name = "Recruit Bot",
 		ReactionTime = 0.75, -- seconds from spotting you to the first shot
 		PerfectReactionTime = 0.2, -- Bot Bootcamp bots: no aim error, no burst pause
-		AimErrorDegrees = 5, -- base miss cone; grows with distance. Settled: ~58% body hits at 20 studs, ~16% at 40
+		AimMissStuds = 1.6, -- base lateral miss at the target, x(1 + distance / AimMissRange), capped
+		AimMissRange = 60,
+		AimMissCap = 2.4, -- settled: ~45% body hits from 20 to 80 studs with the rifle
 		AimSettleSeconds = 1.5, -- aim starts up to twice as wide and settles over this long
 		MovingTargetPenalty = 1.6, -- extra miss cone against a running target
 		SniperAimScale = 0.55, -- the sniper aims tighter, but not perfectly
@@ -450,7 +452,11 @@ local Config = {
 	},
 
 	Sounds = {
-		Shot = "rbxassetid://2781019930",
+		-- Per-class shot cues: one Roblox-owned id, told apart by playback speed.
+		ShotPistol = { id = "rbxassetid://2781019930", speed = 1.25 },
+		ShotRifle = { id = "rbxassetid://2781019930", speed = 1 },
+		ShotShotgun = { id = "rbxassetid://2781019930", speed = 0.7 },
+		ShotSniper = { id = "rbxassetid://2781019930", speed = 0.55 },
 		Hit = "rbxassetid://12222046",
 		Headshot = "rbxassetid://12221990",
 		Reload = "rbxassetid://12221976",

@@ -158,12 +158,18 @@ function Gadgets.use(c: Combatant, dir: Vector3)
 		c.reloading = false
 		c.healingUntil = os.clock() + G.Medkit.channel
 		local ends, humanoid = c.healingUntil, c.humanoid
-		task.delay(G.Medkit.channel, function()
-			if c.alive and c.healingUntil == ends and c.humanoid == humanoid and Combat.isLive(c) then
-				c.healingUntil = 0
-				c.humanoid.Health = math.min(c.humanoid.MaxHealth, c.humanoid.Health + G.Medkit.heal)
-				Combatants.sync(c)
+		-- Heals in server-timed ticks; damage, death or the round ending stop it and keep what was gained.
+		task.spawn(function()
+			local ticks = math.max(1, math.round(G.Medkit.channel / 0.25))
+			for _ = 1, ticks do
+				task.wait(G.Medkit.channel / ticks)
+				if not (c.alive and c.healingUntil == ends and c.humanoid == humanoid and Combat.isLive(c)) then
+					return
+				end
+				humanoid.Health = math.min(humanoid.MaxHealth, humanoid.Health + G.Medkit.heal / ticks)
 			end
+			c.healingUntil = 0
+			Combatants.sync(c)
 		end)
 	else
 		if c.shieldUntil > 0 then

@@ -18,7 +18,10 @@ local MAX_ROWS = 6000
 local UNITS = "t: 0.1 s server time; pos: 0.1 studs; dir: 0.001. p = {t, name, userId (0 = bot), team, x, y, z, "
 	.. "alive}; s = {t, name, ox, oy, oz, dx, dy, dz, hit, zone}"
 
-local Report = {}
+local Report = {
+	-- Studio without DataStore access: the newest 10 reports, so a tester can inspect them.
+	saved = {} :: { { key: string, payload: { [string]: any } } },
+}
 
 local okStore, store = pcall(function()
 	return DataStoreService:GetDataStore("MilitaryDuels_Reports")
@@ -105,15 +108,18 @@ local function submit(player: Player, target: number?): boolean
 		round = log.round,
 		units = UNITS,
 		rows = log.rows,
+		complete = log.done, -- false: the reporter's first round, still in progress
 	}
 	local key = `report_{time}_{player.UserId}`
-	local saved = okStore and pcall((store :: DataStore).SetAsync, store :: DataStore, key, payload)
-	if not saved and RunService:IsStudio() then
+	local ok = okStore and pcall((store :: DataStore).SetAsync, store :: DataStore, key, payload)
+	if not ok and RunService:IsStudio() then
+		table.insert(Report.saved, 1, { key = key, payload = payload })
+		Report.saved[11] = nil
 		local size = #HttpService:JSONEncode(payload)
-		warn(`[Report] {key}: {size} bytes, {#log.rows} rows (no DataStore access in Studio)`)
+		warn(`[Report] {key}: {size} bytes, {#log.rows} rows, kept in Report.saved (no DataStore access in Studio)`)
 		return true
 	end
-	return saved
+	return ok
 end
 
 function Report.bind()
@@ -122,9 +128,9 @@ function Report.bind()
 		if not Net.allow(player, "Report", 1 / 60, 1) or (target ~= nil and malformed) then
 			return
 		end
-		local title = if submit(player, target :: number?)
-			then "Report sent. Thank you!"
-			else "Couldn't send the report"
+		local ok = submit(player, target :: number?)
+		pcall(Net.Report.FireClient, Net.Report, player, ok)
+		local title = if ok then "Report sent. Thank you!" else "Couldn't send the report"
 		pcall(Net.Toast.FireClient, Net.Toast, player, title, "")
 	end)
 	task.spawn(record)

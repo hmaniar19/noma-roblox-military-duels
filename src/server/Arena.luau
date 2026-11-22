@@ -27,8 +27,16 @@ local Rig = require(script.Parent.Rig)
 type Combatant = Combatants.Combatant
 type TeamId = Config.TeamId
 -- `userId` on a bot entry: the friend whose avatar and name the bot wears.
--- `ranked`: the player's Ranked attribute when the roster was picked.
-type Entry = { player: Player?, team: TeamId, name: string, combatant: Combatant?, userId: number?, ranked: boolean? }
+-- `ranked`: the player's Ranked attribute when the roster was picked. `paid`: their result is committed.
+type Entry = {
+	player: Player?,
+	team: TeamId,
+	name: string,
+	combatant: Combatant?,
+	userId: number?,
+	ranked: boolean?,
+	paid: boolean?,
+}
 type Result = TeamId | "Draw"
 type Scores = { Navy: number, Grey: number }
 
@@ -565,7 +573,8 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 
 	-- Noelle's rules: the winners earn 120 if the match-winning elimination was a headshot, else 80
 	-- (a forfeit win counts as 80); the losers earn 10 for each round they won. Everyone who finishes
-	-- earns XP (more for a win and per elimination), and ranked players gain or lose rank points.
+	-- earns XP (more for a win and per elimination), and ranked players gain or lose rank points. Each
+	-- player is paid once, as soon as the result is known: at the fifth point, before the closing scenes.
 	local function payout(winner: TeamId, scores: Scores, headshot: boolean)
 		local P, X = Config.Payouts, Config.Xp
 		-- Rank points move only between human teams that both entered ranked.
@@ -580,7 +589,8 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		local ranked = not anyBot and rankedTeams.Navy and rankedTeams.Grey
 		for _, e in roster do
 			local player = e.player
-			if player and player.Parent then
+			if player and player.Parent and not e.paid then
+				e.paid = true
 				local won = e.team == winner
 				if won then
 					local amount = if headshot then P.WinHeadshot else P.WinBody
@@ -630,8 +640,12 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			end
 			state:SetAttribute("NavyScore", scores.Navy)
 			state:SetAttribute("GreyScore", scores.Grey)
-			-- The fifth point locks the result; leaving during the banners can't flip it.
+			-- The fifth point locks the result and pays it out; leaving during the scenes can't flip or lose it.
 			decided = scores.Navy >= Config.RoundsToWin or scores.Grey >= Config.RoundsToWin
+			if decided then
+				local champion: TeamId = if scores.Navy >= Config.RoundsToWin then "Navy" else "Grey"
+				payout(champion, scores, lastZone == "Head")
+			end
 			banner("RoundEnd", { winner = result, detail = lastElimination, cutscene = true })
 			if not roundCutscenes(result :: Result) then
 				task.wait(Config.RoundEndSeconds)
@@ -811,7 +825,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				setQueued()
 			end
 			local entry = inRoster(player)
-			if not entry or decided or state:GetAttribute("Phase") == "MatchEnd" then
+			if not entry or decided or entry.paid or state:GetAttribute("Phase") == "MatchEnd" then
 				return
 			end
 			-- Leaving mid-match is a saved loss; the leaver's slot goes to a bot from next round on.
