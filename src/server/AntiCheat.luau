@@ -144,6 +144,31 @@ local function inside(p: Vector3, lo: Vector3, hi: Vector3): boolean
 	return p.X >= lo.X and p.X <= hi.X and p.Y >= lo.Y and p.Y <= hi.Y and p.Z >= lo.Z and p.Z <= hi.Z
 end
 
+-- Server-side movement deltas: horizontal travel between checks can't beat the fastest legal move
+-- (a slide) by much. The baseline restarts after server moves (teleports, anchored rides), which
+-- set lastCheck themselves.
+local MAX_RUN = math.max(Config.SprintSpeed, Config.SlideSpeed) * 1.25
+local MOVE_SLACK = 4
+local moved: { [Combatants.Combatant]: { at: Vector3, t: number } } = setmetatable({}, { __mode = "k" }) :: any
+
+local function tooFast(c: Combatants.Combatant, pos: Vector3, now: number): boolean
+	local last = moved[c]
+	local fresh = not last or last.t ~= c.lastCheck
+	moved[c] = { at = pos, t = now }
+	if fresh then
+		return false
+	end
+	local base = last :: { at: Vector3, t: number }
+	local flat = Vector3.new(pos.X - base.at.X, 0, pos.Z - base.at.Z).Magnitude
+	if flat <= MAX_RUN * (now - base.t) + MOVE_SLACK then
+		return false
+	end
+	moved[c] = nil
+	Combatants.teleport(c, CFrame.new(base.at) * c.root.CFrame.Rotation)
+	AntiCheat.flag(c, `moved too fast ({math.floor(flat)} studs)`)
+	return true
+end
+
 -- Physics glitches (wedging into geometry, getting flung) can still push a character out of the map;
 -- anything that ends up outside is returned to its last grounded spot.
 -- Returns true when it had to move the combatant back.
@@ -151,9 +176,12 @@ local function check(c: Combatants.Combatant, now: number, force: boolean): bool
 	if now - c.lastCheck < AC.CheckInterval and not force then
 		return false
 	end
-	c.lastCheck = now
 	local root = c.root
 	local pos = root.Position
+	if tooFast(c, pos, now) then
+		return true
+	end
+	c.lastCheck = now
 	local boundsMin, boundsMax = c.arena.boundsMin, c.arena.boundsMax
 	if inside(pos, boundsMin, boundsMax) then
 		if c.humanoid.FloorMaterial ~= Enum.Material.Air then
@@ -193,6 +221,8 @@ function AntiCheat.start()
 		for _, c in Combatants.all() do
 			if c.alive and not c.root.Anchored and c.root.Parent then
 				check(c, now, false)
+			else
+				moved[c] = nil -- rides and respawns move the root server-side
 			end
 		end
 	end)
