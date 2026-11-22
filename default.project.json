@@ -56,6 +56,11 @@
       "$properties": {
         "CharacterAutoLoads": false
       }
+    },
+    "ReplicatedFirst": {
+      "Dedication": {
+        "$path": "src/first"
+      }
     }
   }
 }

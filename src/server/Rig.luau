@@ -157,4 +157,37 @@ Players.PlayerRemoving:Connect(function(player)
 	descriptions[player.UserId] = nil
 end)
 
+-- Roblox's default R15 animations, used for stand-ins on the celebration and cutscene stages.
+local ANIMATIONS = {
+	cheer = "rbxassetid://507770677",
+	dance = "rbxassetid://507771019",
+	point = "rbxassetid://507770453",
+	hold = "rbxassetid://507768375",
+	run = "rbxassetid://913376220",
+}
+
+function Rig.animate(model: Model, name: string, looped: boolean): AnimationTrack?
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return nil
+	end
+	local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		local created = Instance.new("Animator")
+		created.Parent = humanoid
+		animator = created
+	end
+	assert(animator, "animator")
+	local anim = Instance.new("Animation")
+	anim.AnimationId = ANIMATIONS[name]
+	local ok, track = pcall(animator.LoadAnimation, animator, anim)
+	if not ok or not track then
+		return nil
+	end
+	track.Priority = Enum.AnimationPriority.Action
+	track.Looped = looped
+	track:Play(0.2)
+	return track
+end
+
 return Rig

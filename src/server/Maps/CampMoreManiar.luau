@@ -15,7 +15,16 @@ local NAVY = Color3.fromRGB(24, 34, 62)
 local METAL = Color3.fromRGB(150, 152, 156)
 local UPRIGHT = CFrame.Angles(0, 0, math.pi / 2) -- turns a Cylinder part's X axis vertical
 
-export type LobbyInfo = { spawn: CFrame, leaderboard: TextLabel }
+export type LobbyInfo = {
+	spawn: CFrame,
+	leaderboard: TextLabel,
+	range: {
+		min: Vector3,
+		max: Vector3,
+		racks: { CFrame }, -- world CFrame of each rack top
+		targets: { CFrame }, -- world CFrame of each lane's dummy, facing the firing line
+	},
+}
 
 local function boardOf(label: TextLabel): BasePart
 	return label:FindFirstAncestorWhichIsA("BasePart") :: BasePart
@@ -201,11 +210,54 @@ return function(origin: Vector3): LobbyInfo
 		kit:part(Vector3.new(6, 6, 6), CFrame.new(x + 2, 14, z + 1), leafLight, Enum.Material.Grass, "Ball")
 	end
 
+	-- Practice range on the south lawn, behind the spawn: shooters face away from the courtyard (+z)
+	-- down three lanes that fit between the two south trees (x = ±14) and end at a berm by the wall.
+	local FIRE_Z, BERM_Z = 35.5, 65.5
+	local laneStart, laneEnd = FIRE_Z + 1, BERM_Z - 1
+	local laneMid, laneLen = (laneStart + laneEnd) / 2, laneEnd - laneStart
+	kit:fill(CFrame.new(0, -1, laneMid), Vector3.new(18, 2, laneLen), Enum.Material.Ground)
+	kit:part(Vector3.new(44, 0.4, 8), CFrame.new(0, 0.2, 33), C.Concrete)
+	kit:part(Vector3.new(18, 3.2, 1.5), CFrame.new(0, 2, FIRE_Z), C.Wood, Enum.Material.WoodPlanks)
+	kit:part(Vector3.new(18.6, 0.3, 2), CFrame.new(0, 3.75, FIRE_Z), C.DarkConcrete, Enum.Material.Metal)
+	for _, x in { -9, -3, 3, 9 } do
+		kit:part(Vector3.new(1, 2.5, laneLen), CFrame.new(x, 1.25, laneMid), C.DarkConcrete)
+	end
+	kit:part(Vector3.new(20, 10, 2), CFrame.new(0, 5, BERM_Z), C.DarkConcrete)
+	kit:sandbags(CFrame.new(0, 0, BERM_Z - 2), 18)
+	for _, x in { -10, 10 } do
+		kit:part(Vector3.new(0.8, 11, 0.8), CFrame.new(x, 5.5, 30), C.DarkConcrete, Enum.Material.Metal)
+	end
+	local rangeSignAt = CFrame.lookAt(Vector3.new(0, 9, 30), Vector3.new(0, 9, 0))
+	local rangeSign = kit:sign(rangeSignAt, "PRACTICE RANGE · TRY ANY WEAPON", C.Olive, 20)
+	rangeSign.TextColor3 = GOLD
+	-- The same text on the back of the board, readable from the firing line.
+	local rangeBack = (rangeSign.Parent :: SurfaceGui):Clone()
+	rangeBack.Face = Enum.NormalId.Back
+	rangeBack.Parent = boardOf(rangeSign)
+
+	local racks: { CFrame } = {}
+	for _, x in { -20, -16, -12, 12, 16, 20 } do
+		kit:part(Vector3.new(2.4, 3, 1.4), CFrame.new(x, 1.9, FIRE_Z), C.Wood, Enum.Material.WoodPlanks)
+		kit:part(Vector3.new(2.8, 0.3, 1.8), CFrame.new(x, 3.55, FIRE_Z), C.Olive, Enum.Material.Metal)
+		table.insert(racks, kit:at(CFrame.lookAt(Vector3.new(x, 3.7, FIRE_Z), Vector3.new(x, 3.7, FIRE_Z + 1))))
+	end
+	local targets: { CFrame } = {}
+	for _, x in { -6, 0, 6 } do
+		local stand = Vector3.new(x, 3, BERM_Z - 5)
+		table.insert(targets, kit:at(CFrame.lookAt(stand, Vector3.new(x, 3, FIRE_Z))))
+	end
+
 	kit:boundary(HALF_X, HALF_Z)
 	kit:clearUnderBuildings(Enum.Material.Concrete)
 
 	return {
 		spawn = kit:at(CFrame.lookAt(Vector3.new(0, 3.5, 22), Vector3.new(0, 3.5, 0))),
 		leaderboard = leaderboard,
+		range = {
+			min = kit.origin + Vector3.new(-22, -2, 29),
+			max = kit.origin + Vector3.new(22, 30, BERM_Z + 1),
+			racks = racks,
+			targets = targets,
+		},
 	}
 end

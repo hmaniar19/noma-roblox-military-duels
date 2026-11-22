@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Theme = require(script.Parent.Theme)
 
 local player = Players.LocalPlayer :: Player
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
@@ -14,11 +15,14 @@ local arenas = ReplicatedStorage:WaitForChild("Arenas")
 local QueueRemote = remotes:WaitForChild("Queue") :: RemoteEvent
 local ShopRemote = remotes:WaitForChild("Shop") :: RemoteEvent
 local Toast = remotes:WaitForChild("Toast") :: RemoteEvent
+local SettingsRemote = remotes:WaitForChild("Settings") :: RemoteEvent
+local PracticeRemote = remotes:WaitForChild("Practice") :: RemoteEvent
 
 local FONT, BODY = Enum.Font.GothamBlack, Enum.Font.GothamMedium
-local PANEL = Color3.fromRGB(12, 16, 24)
+-- PANEL and PICKED follow the player's HUD theme (set in Theme.watch at the bottom).
+local PANEL = Config.HudThemes[1].primary
 local IDLE = Color3.fromRGB(32, 40, 54)
-local PICKED = Color3.fromRGB(235, 190, 60)
+local PICKED = Config.HudThemes[1].accent
 local GO = Color3.fromRGB(60, 170, 80)
 local STOP = Color3.fromRGB(190, 60, 50)
 local WEAPON_ORDER = { "AR", "SMG", "Shotgun", "Pistol", "Sniper", "Knife" }
@@ -40,6 +44,7 @@ end
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(refit)
 refit()
 
+local panels: { Frame } = {} -- frames painted with the theme's panel color
 local function frame(parent: Instance, size: UDim2, pos: UDim2, anchor: Vector2?, color: Color3?): Frame
 	local f = Instance.new("Frame")
 	f.Size, f.Position = size, pos
@@ -48,6 +53,9 @@ local function frame(parent: Instance, size: UDim2, pos: UDim2, anchor: Vector2?
 	f.BackgroundTransparency = if color then 0 else 0.15
 	f.Parent = parent
 	Instance.new("UICorner").Parent = f
+	if not color then
+		table.insert(panels, f)
+	end
 	return f
 end
 
@@ -187,7 +195,9 @@ end
 shopPanel = modal("SHOP  ·  earned with coins, looks only")
 local tabs: { [string]: Frame } = {}
 local tabButtons: { [string]: TextButton } = {}
+local currentTab = "SKINS"
 local function showTab(name: string)
+	currentTab = name
 	for id, f in tabs do
 		f.Visible = id == name
 		tabButtons[id].BackgroundColor3 = if id == name then PICKED else IDLE
@@ -233,6 +243,7 @@ end
 
 inventoryPanel = modal("INVENTORY  ·  pick a look for each weapon")
 local swatches: { [string]: { [string]: TextButton } } = {}
+local strokes: { UIStroke } = {} -- equipped-skin outlines, in the theme's accent color
 for row, weapon in WEAPON_ORDER do
 	local y = 56 + (row - 1) * 60
 	local name = label(inventoryPanel, UDim2.fromOffset(150, 50), UDim2.fromOffset(16, y), 16)
@@ -250,9 +261,48 @@ for row, weapon in WEAPON_ORDER do
 		stroke.Thickness = 3
 		stroke.Color = PICKED
 		stroke.Parent = b
+		table.insert(strokes, stroke)
 		swatches[weapon][skin.id] = b
 	end
 end
+
+-- Settings: the HUD color theme (also opens by itself on a player's first join).
+local settingsPanel = modal("SETTINGS  ·  HUD colors")
+settingsPanel.Size = UDim2.fromOffset(840, 330)
+for i, t in Config.HudThemes do
+	local x, y = (i - 1) % 3, (i - 1) // 3
+	local card = button(
+		settingsPanel,
+		UDim2.fromOffset(260, 110),
+		UDim2.fromOffset(16 + x * 272, 60 + y * 124),
+		"",
+		function()
+			SettingsRemote:FireServer("Theme", t.id)
+			settingsPanel.Visible = false
+		end
+	)
+	card.BackgroundColor3 = t.primary
+	frame(card, UDim2.new(1, -20, 0, 14), UDim2.fromOffset(10, 12), nil, t.accent)
+	label(card, UDim2.new(1, -20, 0, 40), UDim2.fromOffset(10, 44), 20).Text = string.upper(t.name)
+end
+local settingsButton = button(gui, UDim2.fromOffset(130, 34), UDim2.new(1, -150, 0, 104), "SETTINGS", function()
+	settingsPanel.Visible = not settingsPanel.Visible
+	shopPanel.Visible, inventoryPanel.Visible = false, false
+end)
+settingsButton.TextSize = 14
+-- On the practice range: a way back to the lobby (walking off the range also works).
+local leaveRange = button(gui, UDim2.fromOffset(220, 48), UDim2.new(0.5, -110, 1, -80), "LEAVE RANGE", function()
+	PracticeRemote:FireServer("Leave")
+end)
+leaveRange.BackgroundColor3 = STOP
+leaveRange.Visible = false
+local function firstJoin()
+	if player:GetAttribute("ThemePicked") == false then
+		settingsPanel.Visible = true -- first join: pick your HUD colors (Navy & Gold until you do)
+	end
+end
+player:GetAttributeChangedSignal("ThemePicked"):Connect(firstJoin)
+firstJoin()
 
 -- Toasts --------------------------------------------------------------------------------------------
 local toast = frame(gui, UDim2.fromOffset(520, 70), UDim2.new(0.5, 0, 0, 70), Vector2.new(0.5, 0))
@@ -267,17 +317,36 @@ Toast.OnClientEvent:Connect(function(title: string, sub: string)
 	toastUntil = os.clock() + 4
 end)
 
+Theme.watch(function(t)
+	PANEL, PICKED = t.primary, t.accent
+	for _, f in panels do
+		f.BackgroundColor3 = PANEL
+	end
+	for _, s in strokes do
+		s.Color = PICKED
+	end
+	coins.TextColor3, toastTitle.TextColor3 = PICKED, PICKED
+	showTab(currentTab)
+end)
+
 local function clock(seconds: number): string
 	return tostring(math.max(0, math.ceil(seconds)))
 end
 
 -- Refresh -------------------------------------------------------------------------------------------
 RunService.RenderStepped:Connect(function()
-	local inLobby = player:GetAttribute("Arena") == nil
+	local arena = player:GetAttribute("Arena")
+	local inLobby = arena == nil
+	local practicing = arena == "Practice"
 	bar.Visible = inLobby
-	status.Visible = inLobby
+	status.Visible = inLobby or practicing
+	settingsButton.Visible = inLobby
+	leaveRange.Visible = practicing
+	if practicing then
+		status.Text = "PRACTICE RANGE · shoot the targets · walk off the range or press LEAVE RANGE to stop"
+	end
 	if not inLobby then
-		shopPanel.Visible, inventoryPanel.Visible = false, false
+		shopPanel.Visible, inventoryPanel.Visible, settingsPanel.Visible = false, false, false
 	end
 	toast.Visible = os.clock() < toastUntil
 	coins.Text = `{player:GetAttribute("Coins") or 0} COINS`

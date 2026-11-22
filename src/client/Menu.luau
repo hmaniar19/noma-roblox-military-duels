@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Theme = require(script.Parent.Theme)
 local Weapon = require(script.Parent.Weapon)
 
 local player = Players.LocalPlayer :: Player
@@ -16,7 +17,7 @@ local LoadoutRemote = remotes:WaitForChild("Loadout") :: RemoteEvent
 
 local FONT = Enum.Font.GothamBlack
 local IDLE = Color3.fromRGB(28, 34, 46)
-local PICKED = Color3.fromRGB(235, 190, 60)
+local PICKED = Config.HudThemes[1].accent -- follows the HUD theme (Theme.watch below)
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "DuelMenu"
@@ -122,6 +123,10 @@ local function options(slot: string, standard: { string }): { string }
 end
 
 local loadoutPanel, loadoutTitle = panel("CHOOSE YOUR LOADOUT", 0.52)
+Theme.watch(function(t)
+	PICKED = t.accent
+	loadoutPanel.BackgroundColor3 = t.primary
+end)
 local primaryRow = row(loadoutPanel, 1, "PRIMARY", options("Primary", Config.Loadout.Primary), weaponNames, function(v)
 	LoadoutRemote:FireServer("Primary", v)
 end)

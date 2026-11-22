@@ -8,14 +8,14 @@ The full design is in `research/brief.md`. Code lives in `src/` and syncs into R
 ## Play it
 
 1. `rojo build default.project.json -o MilitaryDuels.rbxl`, then open the file in Roblox Studio and press **Play**.
-2. You spawn in **Camp More Maniar**, the lobby: the statue of Joanna and Eddie Moore, the shop, the armory and the coin leaderboard. Walk around freely.
+2. A loading screen shows the dedication ("Military Duels — dedicated to Joanna & Eddie Moore"), then you spawn in **Camp More Maniar**, the lobby: the statue of Joanna and Eddie Moore, the shop, the armory, the coin leaderboard and a free **practice range** (walk up to a rack and press **E** to try any weapon on the target dummies; walk off the range or press LEAVE RANGE to stop). On your first join you pick your HUD colors; change them any time with **SETTINGS**.
 3. On the bottom bar:
    - pick a map: **Shooting Range**, **Desert Outpost** or **Urban Training Town**;
    - pick **1v1** or **2v2**;
    - press **PLAY**.
 
    Everyone who queues for the same map plays together; the first player in the queue picks the mode, and bots fill empty slots. Bots wear the avatars and names of the players' Roblox friends. All three maps can run matches at the same time.
-4. **Before each round (8 s):** pick a primary (Assault Rifle, SMG, Shotgun or Sniper), a melee and a gadget (Frag, Smoke or Med Kit). Everyone also carries a Pistol.
+4. **Each round starts with a drop-in** (10 s), picked at random: a helicopter fast-rope, an army truck, a parachute jump or an armored car. Pick your loadout during the ride: a primary (Assault Rifle, SMG, Shotgun or Sniper), a melee and a gadget (Frag, Smoke or Med Kit). Everyone also carries a Pistol. You can't act until you land; the spawn shield starts at landing.
 5. Controls:
    - **click** fires or swings; **right-click** aims (the sniper scopes in)
    - **R** reloads; **1 / 2 / 3** or the mouse wheel switches weapons; **G** uses the gadget
@@ -26,6 +26,10 @@ Rules:
 - A 3-second spawn shield drops the moment you fire or throw.
 - Damage multipliers: head ×3, body ×1, legs ×0.5. Melee always does 55.
 - **Sudden Death at 4–4:** each team gets one sniper and one melee fighter.
+- **Cutscenes** (the next round waits until everyone has seen them):
+  - a round won with a headshot plays the **bullet cam** (slow-motion bullet, "HEADSHOT — CRITICAL HIT");
+  - every round win plays the **anime finisher** (freeze frame, zoom, speed lines, the winner's name card, stylized ink slashes, winner standing over the defeated player);
+  - a draw plays the **handshake**: one fighter from each team walks to the middle and shakes hands.
 - The winning team gets a **celebration** in the sky above the arena, then everyone returns to the lobby.
 
 **Coins and the shop** (no real money, ever):

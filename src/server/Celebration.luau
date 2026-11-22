@@ -21,37 +21,6 @@ export type Member = {
 
 local Celebration = {}
 
-local EMOTES = {
-	cheer = "rbxassetid://507770677",
-	dance = "rbxassetid://507771019",
-	point = "rbxassetid://507770453",
-	hold = "rbxassetid://507768375",
-}
-
-local function play(model: Model, emote: string, looped: boolean): AnimationTrack?
-	local humanoid = model:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		return nil
-	end
-	local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-	if not animator then
-		local created = Instance.new("Animator")
-		created.Parent = humanoid
-		animator = created
-	end
-	assert(animator, "animator")
-	local anim = Instance.new("Animation")
-	anim.AnimationId = EMOTES[emote]
-	local ok, track = pcall(animator.LoadAnimation, animator, anim)
-	if not ok or not track then
-		return nil
-	end
-	track.Priority = Enum.AnimationPriority.Action
-	track.Looped = looped
-	track:Play(0.2)
-	return track
-end
-
 local function part(folder: Instance, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?): Part
 	local p = Instance.new("Part")
 	p.Anchored, p.Size, p.CFrame, p.Color = true, size, cf, color
@@ -173,16 +142,16 @@ function Celebration.play(
 			if not model then
 				return
 			end
-			play(model, "cheer", false)
+			Rig.animate(model, "cheer", false)
 			task.wait(1.6)
-			local dance = play(model, "dance", true)
+			local dance = Rig.animate(model, "dance", true)
 			task.wait(2.4)
 			if dance then
 				dance:Stop(0.3)
 			end
 			equip(model, m.primary)
-			play(model, "hold", true)
-			play(model, "point", false)
+			Rig.animate(model, "hold", true)
+			Rig.animate(model, "point", false)
 		end)
 	end
 	for i, m in losers do

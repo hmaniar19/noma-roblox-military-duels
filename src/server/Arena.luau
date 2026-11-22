@@ -11,6 +11,7 @@ local Bot = require(script.Parent.Bot)
 local Celebration = require(script.Parent.Celebration)
 local Combat = require(script.Parent.Combat)
 local Combatants = require(script.Parent.Combatants)
+local Drop = require(script.Parent.Drop)
 local Config = require(ReplicatedStorage.Shared.Config)
 local Economy = require(script.Parent.Economy)
 local Friends = require(script.Parent.Friends)
@@ -42,6 +43,11 @@ stateRoot.Parent = ReplicatedStorage
 local botsRoot = Instance.new("Folder")
 botsRoot.Name = "Bots"
 botsRoot.Parent = workspace
+-- Drop-in vehicles and cutscene stand-ins, one folder per arena.
+local stagingRoot = Instance.new("Folder")
+stagingRoot.Name = "Staging"
+stagingRoot.Parent = workspace
+local random = Random.new()
 
 local function other(team: TeamId): TeamId
 	return if team == "Navy" then "Grey" else "Navy"
@@ -60,6 +66,9 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	local bots = Instance.new("Folder")
 	bots.Name = id
 	bots.Parent = botsRoot
+	local rides = Instance.new("Folder")
+	rides.Name = id
+	rides.Parent = stagingRoot
 
 	local queue: { Player } = {}
 	local roster: { Entry } = {}
@@ -67,6 +76,8 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	local decided = false
 	local lastElimination = ""
 	local lastZone: Config.Zone? = nil -- zone of the latest elimination (for the payout)
+	-- The latest elimination by someone else, for the round-end cutscenes (bullet cam, finisher).
+	local lastKill: { attacker: Combatant, victim: Combatant, from: Vector3, to: Vector3 }? = nil
 
 	local function setPhase(phase: string)
 		state:SetAttribute("Phase", phase)
@@ -137,6 +148,12 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			if attacker and attacker ~= victim then
 				lastElimination = `{attacker.name} eliminated {victim.name}`
 					.. (if zone == "Head" then " with a HEADSHOT" else "")
+				lastKill = {
+					attacker = attacker,
+					victim = victim,
+					from = Combat.headPosition(attacker),
+					to = Combat.headPosition(victim),
+				}
 			end
 			latchIfWiped()
 		end,
@@ -207,12 +224,191 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		Combatants.clear(hooks)
 		Gadgets.reset(id)
 		bots:ClearAllChildren()
+		rides:ClearAllChildren()
+	end
+
+	-- Cutscenes play on the clients, but the server starts them and holds the next round until every
+	-- player in the match has reported finishing (or a grace period passes). Stale tokens are ignored.
+	local cutsceneToken = 0
+	local function cutscene(kind: string, data: { [string]: any }, seconds: number)
+		cutsceneToken += 1
+		local token = cutsceneToken
+		data.token, data.seconds = token, seconds
+		local waiting: { [Player]: boolean } = {}
+		for _, e in roster do
+			if e.player and e.player.Parent then
+				waiting[e.player] = true
+				Net.Cutscene:FireClient(e.player, kind, data)
+			end
+		end
+		local anyone = next(waiting) ~= nil
+		local done = Net.CutsceneDone.OnServerEvent:Connect(function(player, t)
+			if t == token then
+				waiting[player] = nil
+			end
+		end)
+		local started = os.clock()
+		local deadline = started + seconds + Config.CutsceneGraceSeconds
+		while os.clock() < deadline do
+			for player in waiting do
+				if player.Parent == nil then
+					waiting[player] = nil
+				end
+			end
+			-- With nobody watching (a bots-only match), still let the moment play out.
+			if next(waiting) == nil and (anyone or os.clock() - started >= seconds) then
+				break
+			end
+			task.wait(0.1)
+		end
+		done:Disconnect()
+	end
+
+	local function characters(): { Instance }
+		local list: { Instance } = { bots, rides }
+		for _, e in roster do
+			if e.player and e.player.Character then
+				table.insert(list, e.player.Character)
+			end
+		end
+		return list
+	end
+
+	-- Anime finisher: freeze frame with the round's winner standing over the player they beat.
+	local function finisher(winner: TeamId): boolean
+		local kill = lastKill
+		local victor = if kill
+				and kill.attacker.team == winner
+				and kill.attacker.alive
+			then kill.attacker
+			else living(winner)[1]
+		local defeated = if kill and kill.victim.team ~= winner then kill.victim else nil
+		if not defeated then
+			for _, e in roster do
+				local c = e.combatant
+				if c and c.team ~= winner and not c.alive then
+					defeated = c
+				end
+			end
+		end
+		if not victor or not defeated or not victor.root.Parent or not defeated.root.Parent then
+			return false
+		end
+		local at = defeated.root.Position
+		local away = (victor.root.Position - at) * Vector3.new(1, 0, 1)
+		local dir = if away.Magnitude > 0.1 then away.Unit else Vector3.xAxis
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = characters()
+		local floor = workspace:Raycast(at + Vector3.new(0, 4, 0), Vector3.new(0, -20, 0), params)
+		local stand = Vector3.new(at.X, (if floor then floor.Position.Y else at.Y - 1) + 3, at.Z) + dir * 3.5
+		victor.root.Anchored = true
+		victor.root.CFrame = CFrame.lookAt(stand, Vector3.new(at.X, stand.Y, at.Z))
+		cutscene("Finisher", {
+			winnerName = victor.name,
+			winnerTeam = winner,
+			defeatedName = defeated.name,
+			winnerPos = stand,
+			defeatedPos = at,
+			focus = (stand + at) / 2,
+		}, 3.2)
+		return true
+	end
+
+	-- Draw: one fighter from each team walks to the middle of a small stage above the arena and
+	-- they shake hands. Stand-ins are used so it works even when both sides were eliminated.
+	local function handshake()
+		local middle = (info.boundsMin + info.boundsMax) / 2
+		local center = Vector3.new(middle.X, info.boundsMin.Y + 12 + 140, middle.Z)
+		local pad = Instance.new("Part")
+		pad.Anchored, pad.Size = true, Vector3.new(30, 1, 18)
+		pad.CFrame = CFrame.new(center - Vector3.new(0, 0.5, 0))
+		pad.Material, pad.Color = Enum.Material.Concrete, Color3.fromRGB(120, 116, 108)
+		pad.Parent = rides
+		local actors: { Model } = {}
+		for i, team in { "Navy", "Grey" } :: { TeamId } do
+			for _, e in roster do
+				if e.team == team then
+					local side = if i == 1 then -1 else 1
+					local start = center + Vector3.new(0, 3, side * 10)
+					local userId = if e.player then e.player.UserId else e.userId
+					local model =
+						Rig.spawnBot(team, e.name, CFrame.lookAt(start, center + Vector3.new(0, 3, 0)), rides, userId)
+					model.PrimaryPart = model:FindFirstChild("HumanoidRootPart") :: BasePart
+					(model.PrimaryPart :: BasePart).Anchored = true
+					table.insert(actors, model)
+					break
+				end
+			end
+		end
+		task.spawn(function()
+			local runs = {}
+			for _, a in actors do
+				table.insert(runs, Rig.animate(a, "run", true))
+			end
+			local steps = 36
+			for s = 1, steps do
+				for i, a in actors do
+					local side = if i == 1 then -1 else 1
+					local z = side * (10 - 8.4 * s / steps)
+					local p = center + Vector3.new(0, 3, z)
+					a:PivotTo(CFrame.lookAt(p, p - Vector3.new(0, 0, side)))
+				end
+				task.wait(0.05)
+			end
+			for _, track in runs do
+				if track then
+					track:Stop(0.2)
+				end
+			end
+			-- Right arms out to meet in the middle, then a few shakes.
+			local shoulders = {}
+			for _, a in actors do
+				local arm = a:FindFirstChild("RightUpperArm")
+				local joint = arm and arm:FindFirstChild("RightShoulder")
+				if joint and joint:IsA("Motor6D") then
+					table.insert(shoulders, { joint = joint, rest = joint.C0 })
+				end
+			end
+			for beat = 0, 16 do
+				for _, s in shoulders do
+					local bob = if beat > 3 then math.sin(beat * 1.6) * 0.12 else 0
+					s.joint.C0 = s.rest * CFrame.Angles(math.rad(75) + bob, 0, 0)
+				end
+				task.wait(0.1)
+			end
+		end)
+		cutscene("Handshake", { center = center }, 4.5)
+		for _, a in actors do
+			a:Destroy()
+		end
+		pad:Destroy()
+	end
+
+	-- The round's cutscenes: a headshot win gets the bullet cam first, every win gets the finisher,
+	-- and a draw gets the handshake. Returns false when nothing could be staged.
+	local function roundCutscenes(result: Result): boolean
+		if result == "Draw" then
+			handshake()
+			return true
+		end
+		local kill = lastKill
+		if lastZone == "Head" and kill and kill.attacker.team == result then
+			cutscene("BulletCam", {
+				from = kill.from,
+				to = kill.to,
+				shooterName = kill.attacker.name,
+				victimName = kill.victim.name,
+			}, 2.6)
+		end
+		return finisher(result :: TeamId)
 	end
 
 	local function playRound(round: number, scores: Scores): Result?
 		clearField()
 		lastElimination = ""
 		lastZone = nil
+		lastKill = nil
 		local navySide = if round % 2 == 1 then "A" else "B"
 		state:SetAttribute("Round", round)
 		state:SetAttribute("NavySide", navySide)
@@ -221,6 +417,8 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		setPhase("Freeze")
 
 		local slots = { Navy = 0, Grey = 0 }
+		local navyRide: Drop.Group = { team = "Navy", spawns = {}, riders = {} }
+		local greyRide: Drop.Group = { team = "Grey", spawns = {}, riders = {} }
 		for _, entry in roster do
 			local side = if entry.team == "Navy" then navySide else (if navySide == "A" then "B" else "A")
 			slots[entry.team] += 1
@@ -235,14 +433,26 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				-- A side that can't field anyone loses the match rather than leaving a one-sided round.
 				forfeit = entry.team
 			end
+			if entry.combatant then
+				local group = if entry.team == "Navy" then navyRide else greyRide
+				table.insert(group.spawns, cf)
+				table.insert(group.riders, entry.combatant)
+			end
 		end
 		armAll()
-		-- The pick countdown starts once everyone is in, so slow character loads don't eat into it.
+		-- Each round everyone arrives by one random drop-in; the loadout pick happens during the ride.
+		local drop = Drop.KINDS[random:NextInteger(1, #Drop.KINDS)]
+		state:SetAttribute("Drop", drop)
 		state:SetAttribute("FreezeEndsAt", workspace:GetServerTimeNow() + Config.FreezeSeconds)
-		banner("RoundStart", { round = round, sudden = sudden, navySide = navySide })
-		local freezeEnds = os.clock() + Config.FreezeSeconds
-		while os.clock() < freezeEnds and not forfeit do
-			task.wait(0.1)
+		banner("RoundStart", { round = round, sudden = sudden, navySide = navySide, drop = drop })
+		local landed = false
+		task.spawn(function()
+			Drop.run(drop, { navyRide, greyRide }, Config.FreezeSeconds, rides)
+			landed = true
+		end)
+		local freezeEnds = os.clock() + Config.FreezeSeconds + 1
+		while not landed and os.clock() < freezeEnds and not forfeit do
+			task.wait(0.05)
 		end
 		if forfeit then
 			return nil
@@ -342,8 +552,10 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			state:SetAttribute("GreyScore", scores.Grey)
 			-- The fifth point locks the result; leaving during the banners can't flip it.
 			decided = scores.Navy >= Config.RoundsToWin or scores.Grey >= Config.RoundsToWin
-			banner("RoundEnd", { winner = result, detail = lastElimination })
-			task.wait(Config.RoundEndSeconds)
+			banner("RoundEnd", { winner = result, detail = lastElimination, cutscene = true })
+			if not roundCutscenes(result :: Result) then
+				task.wait(Config.RoundEndSeconds)
+			end
 		end
 
 		local winner: TeamId = if decided

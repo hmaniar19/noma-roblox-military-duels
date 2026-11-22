@@ -24,6 +24,9 @@ Net.Gadget = event("Gadget")
 Net.Loadout = event("Loadout")
 Net.Stance = event("Stance")
 Net.Queue = event("Queue")
+Net.CutsceneDone = event("CutsceneDone")
+Net.Settings = event("Settings")
+Net.Practice = event("Practice")
 Net.Shop = event("Shop")
 Net.Reload = event("Reload")
 Net.Aim = event("Aim")
@@ -34,6 +37,7 @@ Net.HitConfirm = event("HitConfirm")
 Net.Damaged = event("Damaged")
 Net.Banner = event("Banner")
 Net.Toast = event("Toast")
+Net.Cutscene = event("Cutscene")
 
 type Bucket = { tokens: number, at: number }
 local buckets: { [Player]: { [string]: Bucket } } = {}

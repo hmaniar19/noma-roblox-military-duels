@@ -7,6 +7,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Theme = require(script.Parent.Theme)
 local Weapon = require(script.Parent.Weapon)
 
 local player = Players.LocalPlayer :: Player
@@ -210,37 +211,43 @@ end
 
 local WIN = Color3.fromRGB(110, 220, 120)
 local LOSE = Color3.fromRGB(235, 70, 60)
-local GOLD = Color3.fromRGB(235, 190, 60)
+local GOLD = Config.HudThemes[1].accent
+local DROP_NAMES: { [string]: string } = {
+	Helicopter = "helicopter fast-rope",
+	Truck = "army truck",
+	Parachute = "parachute jump",
+	ArmoredCar = "armored car",
+}
+
+-- The player's HUD theme: panel backgrounds take its primary color, gold text its accent.
+Theme.watch(function(t)
+	GOLD = t.accent
+	board.BackgroundColor3, healthBack.BackgroundColor3 = t.primary, t.primary
+	roundLabel.TextColor3 = t.accent
+end)
 
 Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 	local team = myTeam()
 	if kind == "RoundStart" then
 		local mySide = if team == "Navy" then data.navySide elseif data.navySide == "A" then "B" else "A"
-		local sub = if team then `You start on SIDE {mySide}` else ""
+		local ride = DROP_NAMES[data.drop] or "drop-in"
+		local sub = if team then `Arriving by {ride} · you start on SIDE {mySide}` else ""
 		if data.sudden then
 			showBanner("SUDDEN DEATH", "4 - 4. Win this round to take the match.", LOSE, Config.FreezeSeconds)
 		else
 			showBanner(`ROUND {data.round}`, sub, Color3.new(1, 1, 1), Config.FreezeSeconds)
 		end
 	elseif kind == "RoundEnd" then
+		-- With a cutscene coming, the result only flashes; the cutscene shows the rest.
+		local seconds = if data.cutscene then 1.2 else Config.RoundEndSeconds
 		if data.winner == "Draw" then
-			showBanner("DRAW", `{data.detail}. No point.`, GOLD, Config.RoundEndSeconds)
+			showBanner("DRAW", `{data.detail}. No point.`, GOLD, seconds)
 		elseif team then
 			local won = data.winner == team
-			showBanner(
-				if won then "ROUND WON" else "ROUND LOST",
-				data.detail,
-				if won then WIN else LOSE,
-				Config.RoundEndSeconds
-			)
+			showBanner(if won then "ROUND WON" else "ROUND LOST", data.detail, if won then WIN else LOSE, seconds)
 			Weapon.sound(if won then Config.Sounds.Victory else Config.Sounds.Whoosh, gui, 0.6)
 		else
-			showBanner(
-				`{Config.Teams[data.winner :: Config.TeamId].name} WINS THE ROUND`,
-				data.detail,
-				GOLD,
-				Config.RoundEndSeconds
-			)
+			showBanner(`{Config.Teams[data.winner :: Config.TeamId].name} WINS THE ROUND`, data.detail, GOLD, seconds)
 		end
 	elseif kind == "MatchEnd" then
 		local score = `{data.navy} - {data.grey}`
@@ -317,7 +324,8 @@ end
 
 RunService.RenderStepped:Connect(function()
 	local phase = state:GetAttribute("Phase")
-	board.Visible = phase ~= nil -- only while in a match; the lobby bar replaces it at Camp More Maniar
+	-- Only while in a match; the lobby bar replaces it at Camp More Maniar, and the range has no score.
+	board.Visible = phase ~= nil and player:GetAttribute("Arena") ~= "Practice"
 	local now = workspace:GetServerTimeNow()
 	navyName.Text = state:GetAttribute("NavyName") or "NAVY"
 	greyName.Text = state:GetAttribute("GreyName") or "GREY"

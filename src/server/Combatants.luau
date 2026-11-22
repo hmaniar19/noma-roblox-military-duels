@@ -106,20 +106,32 @@ function Combatants.all(): { Combatant }
 	return list
 end
 
+local function retire(c: Combatant)
+	c.alive = false
+	c.reloadToken += 1
+	if c.player then
+		for _, key in SYNCED do
+			c.player:SetAttribute(key, nil)
+		end
+	end
+end
+
 -- Ends every combatant in one arena (other arenas keep fighting).
 function Combatants.clear(arena: ArenaHooks)
 	for i = #list, 1, -1 do
-		local c = list[i]
-		if c.arena == arena then
-			c.alive = false
-			c.reloadToken += 1
-			if c.player then
-				for _, key in SYNCED do
-					c.player:SetAttribute(key, nil)
-				end
-			end
+		if list[i].arena == arena then
+			retire(list[i])
 			table.remove(list, i)
 		end
+	end
+end
+
+-- Ends one combatant (the lobby practice range adds and removes them one at a time).
+function Combatants.remove(c: Combatant)
+	local i = table.find(list, c)
+	if i then
+		retire(c)
+		table.remove(list, i)
 	end
 end
 

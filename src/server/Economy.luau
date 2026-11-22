@@ -14,6 +14,7 @@ type Profile = {
 	owned: { [string]: boolean },
 	equipped: { [string]: string }, -- weapon id -> skin id
 	beginnersLuck: boolean, -- true once the one-time bonus has been paid
+	hudTheme: string?, -- Config.HudThemes id; nil until the first-join pick
 }
 
 local Economy = {}
@@ -49,6 +50,8 @@ end
 -- of everything someone owns doesn't fit in one.
 local function publish(player: Player, p: Profile)
 	player:SetAttribute("Coins", p.coins)
+	player:SetAttribute("HudTheme", p.hudTheme or Config.HudThemes[1].id)
+	player:SetAttribute("ThemePicked", p.hudTheme ~= nil) -- false shows the first-join picker
 	for id in CATALOG do
 		player:SetAttribute("Owns_" .. id, if owns(player, p, id) then true else nil)
 	end
@@ -90,6 +93,7 @@ local function load(player: Player)
 		owned = if typeof(data) == "table" and typeof(data.owned) == "table" then data.owned else {},
 		equipped = if typeof(data) == "table" and typeof(data.equipped) == "table" then data.equipped else {},
 		beginnersLuck = typeof(data) == "table" and data.beginnersLuck == true,
+		hudTheme = if typeof(data) == "table" and typeof(data.hudTheme) == "string" then data.hudTheme else nil,
 	}
 	p.owned.Standard = true
 	if player.Parent == nil then
@@ -133,6 +137,19 @@ function Economy.leaderboard(count: number): string
 end
 
 function Economy.bind()
+	Net.Settings.OnServerEvent:Connect(function(player, setting, value)
+		local p = profiles[player]
+		if not p or not Net.allow(player, "Settings", 4, 2) or setting ~= "Theme" then
+			return
+		end
+		for _, t in Config.HudThemes do
+			if t.id == value then
+				p.hudTheme = t.id
+				publish(player, p)
+				task.spawn(save, player)
+			end
+		end
+	end)
 	Net.Shop.OnServerEvent:Connect(function(player, action, a, b)
 		local p = profiles[player]
 		if not p or not Net.allow(player, "Shop", 4, 4) then

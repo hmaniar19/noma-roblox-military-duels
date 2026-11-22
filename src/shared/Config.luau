@@ -45,9 +45,10 @@ local Config = {
 	RoundsToWin = 5,
 	SuddenDeathAt = 4,
 	RoundSeconds = 120,
-	FreezeSeconds = 8, -- includes picking a loadout
+	FreezeSeconds = 10, -- the drop-in ride; the loadout is picked during it
 	QueueSeconds = 10, -- after the first player queues for a map, others have this long to join
-	RoundEndSeconds = 4,
+	RoundEndSeconds = 4, -- when no cutscene could be staged
+	CutsceneGraceSeconds = 3, -- how long past a cutscene's length the server waits for slow clients
 	MatchEndSeconds = 10, -- includes the match-win celebration
 	SpawnShieldSeconds = 3,
 
@@ -194,6 +195,47 @@ local Config = {
 		Smoke = { name = "Smoke Grenade", fuse = 1.2, radius = 12, duration = 12, throwSpeed = 75 },
 		Medkit = { name = "Med Kit", heal = 50, channel = 3 },
 	},
+
+	-- HUD color themes, picked on first join and changed later in Settings. `primary` colors the panels,
+	-- `accent` the highlights and gold text. The first one is the default.
+	HudThemes = {
+		{
+			id = "NavyGold",
+			name = "Navy & Gold",
+			primary = Color3.fromRGB(16, 24, 48),
+			accent = Color3.fromRGB(235, 190, 60),
+		},
+		{
+			id = "CrimsonSilver",
+			name = "Crimson & Silver",
+			primary = Color3.fromRGB(64, 14, 20),
+			accent = Color3.fromRGB(214, 218, 226),
+		},
+		{
+			id = "ForestSand",
+			name = "Forest & Sand",
+			primary = Color3.fromRGB(26, 40, 24),
+			accent = Color3.fromRGB(220, 196, 146),
+		},
+		{
+			id = "MidnightCyan",
+			name = "Midnight & Cyan",
+			primary = Color3.fromRGB(10, 14, 32),
+			accent = Color3.fromRGB(70, 214, 234),
+		},
+		{
+			id = "PurplePink",
+			name = "Purple & Pink",
+			primary = Color3.fromRGB(42, 20, 64),
+			accent = Color3.fromRGB(250, 128, 196),
+		},
+		{
+			id = "BlackOrange",
+			name = "Black & Orange",
+			primary = Color3.fromRGB(16, 16, 18),
+			accent = Color3.fromRGB(250, 146, 44),
+		},
+	} :: { { id: string, name: string, primary: Color3, accent: Color3 } },
 
 	-- Roblox user ids of the game's developers. They own every skin and special weapon for free
 	-- (looks only, so it gives no advantage in a duel).

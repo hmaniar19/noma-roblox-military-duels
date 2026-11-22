@@ -31,6 +31,7 @@ local LOOK_INTERVAL = 2 / Config.AntiCheat.LookRate
 local Weapon = {}
 Weapon.aiming = false
 Weapon.menuOpen = false -- set by Menu; keeps the cursor visible while a picker is open
+Weapon.cutscene = false -- set by Cutscene; the first-person gun hides while one plays
 
 local firing = false
 local aimBlend = 0
@@ -83,12 +84,14 @@ function Weapon.current(): (Config.WeaponId?, Config.Weapon?)
 	return id, if id then Config.Weapons[id] else nil
 end
 
--- Fighting right now: on a team, alive, and not on the match-win celebration stage.
+-- Fighting right now: on a team, alive, not on the match-win celebration stage, and not watching a
+-- cutscene.
 function Weapon.inCombat(): boolean
 	local character = player.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	local onStage = player:GetAttribute("Celebrating") == true
-	return player:GetAttribute("Team") ~= nil and not onStage and humanoid ~= nil and humanoid.Health > 0
+	local fighting = player:GetAttribute("Team") ~= nil and not onStage and not Weapon.cutscene
+	return fighting and humanoid ~= nil and humanoid.Health > 0
 end
 
 -- Rebuilds the first-person model when the weapon in hand changes.

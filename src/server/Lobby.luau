@@ -10,6 +10,7 @@ local Config = require(ReplicatedStorage.Shared.Config)
 local Economy = require(script.Parent.Economy)
 local Loadout = require(script.Parent.Loadout)
 local Net = require(script.Parent.Net)
+local PracticeRange = require(script.Parent.PracticeRange)
 local World = require(script.Parent.World)
 
 local Lobby = {}
@@ -56,6 +57,13 @@ function Lobby.run(world: World.World)
 	for _, m in Config.Maps do
 		arenas[m.id] = Arena.new(world.maps[m.id], toLobby)
 	end
+	-- The lobby box (Camp More Maniar's walls) is the practice range's anti-cheat bounds.
+	local lobbyOrigin = spawn.Position - Vector3.new(0, 3.5, 22)
+	local range = PracticeRange.new(
+		world.lobby.range,
+		lobbyOrigin + Vector3.new(-90, -12, -70),
+		lobbyOrigin + Vector3.new(90, 60, 70)
+	)
 
 	local function arenaOf(player: Player, attribute: string): Arena.Arena?
 		local id = player:GetAttribute(attribute)
@@ -63,7 +71,13 @@ function Lobby.run(world: World.World)
 	end
 
 	Net.Queue.OnServerEvent:Connect(function(player, action, mapId, mode)
-		if not Net.allow(player, "Queue", 4, 2) or player:GetAttribute("Arena") ~= nil then
+		if not Net.allow(player, "Queue", 4, 2) then
+			return
+		end
+		if range.isPracticing(player) then
+			range.leave(player) -- queueing ends practice
+		end
+		if player:GetAttribute("Arena") ~= nil then
 			return -- already in a match
 		end
 		local current = arenaOf(player, "Queued")

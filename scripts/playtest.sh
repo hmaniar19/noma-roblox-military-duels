@@ -8,7 +8,7 @@ export PATH="$HOME/.rokit/bin:$PATH"
 
 PLACE="$PWD/.cache/playtest.rbxl"
 LOGS="$HOME/Library/Logs/Roblox"
-TIMEOUT=${PLAYTEST_TIMEOUT:-300}
+TIMEOUT=${PLAYTEST_TIMEOUT:-600}
 
 # Force-closing skips Studio's own cleanup, so also delete the place's lock file; a stale lock makes
 # the next open show a "file is in use" dialog that blocks Play.
