@@ -247,10 +247,10 @@ local function load(player: Player)
 	if not p.beginnersLuck then
 		p.beginnersLuck = true
 		p.coins += Config.Payouts.BeginnersLuck
-		publish(player, p)
 		Net.Toast:FireClient(player, "beginnersluck", `+{Config.Payouts.BeginnersLuck} coins to get you started!`)
 		markDirty(player)
 	end
+	publish(player, p) -- every profile, new or returning: the queue waits for these attributes
 end
 
 function Economy.award(player: Player, amount: number, reason: string)
