@@ -1,0 +1,23 @@
+# Code checks on every pull request and on main: formatting, lint, strict type check and a place
+# build (scripts/check.sh), plus format and lint of the Studio game test. The game test itself
+# (scripts/playtest.sh) needs Roblox Studio, so it runs locally before merging.
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain (rokit.toml)
+        uses: CompeyDev/setup-rokit@v0.2.1
+      - name: Game code checks
+        run: ./scripts/check.sh
+      - name: Game test scripts
+        run: |
+          stylua --check tests
+          selene tests

@@ -189,7 +189,11 @@ RunService.RenderStepped:Connect(function()
 		highlight(gadgetRow, (player:GetAttribute("PickGadget") or "Frag") :: string)
 		local held = player:GetAttribute("Weapon") :: string?
 		local heldWeapon = if held then Config.Weapons[held] else nil
-		highlight(roleRow, if heldWeapon and heldWeapon.kind == "melee" then "Knife" else held)
+		local role = if heldWeapon and heldWeapon.kind == "melee"
+			then "Knife"
+			elseif heldWeapon and heldWeapon.scoped then "Sniper"
+			else held
+		highlight(roleRow, role)
 		note.Text = if sudden
 			then "One sniper and one melee fighter per team. You have: " .. (if heldWeapon
 				then heldWeapon.name

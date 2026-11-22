@@ -118,6 +118,9 @@ function Rig.spawnPlayer(player: Player, team: Config.TeamId, cf: CFrame): Model
 	if not player:IsDescendantOf(Players) then
 		return nil
 	end
+	-- Stream the destination to their client before the character exists: a new character starts at
+	-- the default spawn point, so the move below must follow the load with no wait in between.
+	pcall(player.RequestStreamAroundAsync, player, cf.Position)
 	player:LoadCharacterWithHumanoidDescriptionAsync(desc)
 	local model = player.Character
 	if not model or not player:IsDescendantOf(Players) then

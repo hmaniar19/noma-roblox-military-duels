@@ -113,12 +113,7 @@ function Economy.award(player: Player, amount: number, reason: string)
 	p.coins += amount
 	publish(player, p)
 	Net.Toast:FireClient(player, `+{amount} coins`, reason)
-	save(player)
-end
-
-function Economy.skinFor(player: Player?, weapon: string): string?
-	local p = if player then profiles[player] else nil
-	return if p then p.equipped[weapon] else nil
+	task.spawn(save, player) -- DataStore writes yield; the match loop that pays out must not wait
 end
 
 -- "Name  1,234" lines for the top players in this server.

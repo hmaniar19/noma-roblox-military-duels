@@ -30,6 +30,16 @@ gui.DisplayOrder = 4
 gui.IgnoreGuiInset = true
 gui.Parent = player:WaitForChild("PlayerGui")
 
+-- The bar is laid out for 1340 px; narrower windows scale the whole screen down so nothing overlaps.
+local BAR_WIDTH = 1340
+local fit = Instance.new("UIScale")
+fit.Parent = gui
+local function refit()
+	fit.Scale = math.min(1, workspace.CurrentCamera.ViewportSize.X / (BAR_WIDTH + 40))
+end
+workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(refit)
+refit()
+
 local function frame(parent: Instance, size: UDim2, pos: UDim2, anchor: Vector2?, color: Color3?): Frame
 	local f = Instance.new("Frame")
 	f.Size, f.Position = size, pos
@@ -68,7 +78,7 @@ local function button(parent: Instance, size: UDim2, pos: UDim2, text: string, o
 end
 
 -- Bottom bar ----------------------------------------------------------------------------------------
-local bar = frame(gui, UDim2.new(1, -40, 0, 150), UDim2.new(0.5, 0, 1, -16), Vector2.new(0.5, 1))
+local bar = frame(gui, UDim2.fromOffset(BAR_WIDTH, 150), UDim2.new(0.5, 0, 1, -16), Vector2.new(0.5, 1))
 local status = label(gui, UDim2.fromOffset(900, 30), UDim2.new(0.5, -450, 1, -200), 20)
 status.TextStrokeTransparency = 0.4
 

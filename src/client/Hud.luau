@@ -266,6 +266,8 @@ Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 				camera.CameraType = Enum.CameraType.Custom
 				return
 			end
+			-- Reasserted every frame: the stage respawn can hand the camera back to the default scripts.
+			camera.CameraType = Enum.CameraType.Scriptable
 			local angle = math.rad(-40 + 80 * t)
 			local radius = 34 - 12 * t
 			local eye = focus + Vector3.new(math.sin(angle) * radius, 7 - 3 * t, math.cos(angle) * radius)

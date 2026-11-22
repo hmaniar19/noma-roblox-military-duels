@@ -132,10 +132,11 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				and workspace:GetServerTimeNow() < (state:GetAttribute("RoundEndsAt") or 0)
 		end,
 		onElimination = function(victim, attacker, zone)
+			-- Only a kill by someone else can make the deciding elimination a headshot.
+			lastZone = if attacker and attacker ~= victim then zone else nil
 			if attacker and attacker ~= victim then
 				lastElimination = `{attacker.name} eliminated {victim.name}`
 					.. (if zone == "Head" then " with a HEADSHOT" else "")
-				lastZone = zone
 			end
 			latchIfWiped()
 		end,
@@ -211,6 +212,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	local function playRound(round: number, scores: Scores): Result?
 		clearField()
 		lastElimination = ""
+		lastZone = nil
 		local navySide = if round % 2 == 1 then "A" else "B"
 		state:SetAttribute("Round", round)
 		state:SetAttribute("NavySide", navySide)
@@ -264,6 +266,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		end
 		state:SetAttribute("RoundEndsAt", workspace:GetServerTimeNow() + Config.RoundSeconds)
 		setPhase("Live")
+		latchIfWiped() -- someone who reset or left during the freeze already lost this round
 
 		local deadline = os.clock() + Config.RoundSeconds
 		while os.clock() < deadline and not forfeit and state:GetAttribute("Phase") == "Live" do
@@ -309,9 +312,6 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 
 	local function playMatch()
 		local scores: Scores = { Navy = 0, Grey = 0 }
-		forfeit = nil
-		decided = false
-		lastZone = nil
 		state:SetAttribute("NavyScore", 0)
 		state:SetAttribute("GreyScore", 0)
 		state:SetAttribute("NavyName", teamNames("Navy"))
@@ -404,6 +404,9 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			end
 			task.wait(0.2)
 		end
+		-- A new match: from here a leaver's side can forfeit (Friends.pick below may yield).
+		forfeit = nil
+		decided = false
 		roster = {}
 		local botNumber = 0
 		local humans: { Player } = {}
@@ -425,9 +428,11 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			end
 		end
 		-- Bots wear the avatars and names of the players' friends, so it feels like a real opponent.
-		for i, friend in Friends.pick(humans, #botEntries) do
-			botEntries[i].userId = friend.userId
-			botEntries[i].name = friend.name
+		if #botEntries > 0 then
+			for i, friend in Friends.pick(humans, #botEntries) do
+				botEntries[i].userId = friend.userId
+				botEntries[i].name = friend.name
+			end
 		end
 		setQueued()
 		return true

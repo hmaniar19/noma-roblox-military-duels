@@ -27,13 +27,20 @@ function Lobby.run(world: World.World)
 		if player.Parent == nil then
 			return
 		end
+		local at = spawn * CFrame.new(random:NextNumber(-10, 10), 0, random:NextNumber(-6, 6))
+		-- Stream Camp More Maniar to their client before the character exists: a new character starts
+		-- at the default spawn point, so the move below must follow the load with no wait in between.
+		pcall(player.RequestStreamAroundAsync, player, at.Position)
+		if not player:IsDescendantOf(Players) then
+			return -- left while the area loaded
+		end
 		player:LoadCharacterAsync()
 		local character = player.Character
 		-- Skip the move if a match picked them up while this load was running.
 		if not character or player:GetAttribute("Arena") ~= nil then
 			return
 		end
-		character:PivotTo(spawn * CFrame.new(random:NextNumber(-10, 10), 0, random:NextNumber(-6, 6)))
+		character:PivotTo(at)
 		local humanoid = character:FindFirstChildOfClass("Humanoid")
 		if humanoid then
 			humanoid.Died:Once(function()

@@ -1,0 +1,67 @@
+{
+  "name": "military-duels-playtest",
+  "servePort": 34873,
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": {
+        "$path": "../../src/shared"
+      }
+    },
+    "ServerScriptService": {
+      "Server": {
+        "$path": "../../src/server"
+      },
+      "PlayTest": {
+        "$path": "PlayTest.server.luau"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Client": {
+          "$path": "../../src/client"
+        },
+        "PlayTest": {
+          "$path": "PlayTest.client.luau"
+        }
+      },
+      "$properties": {
+        "GameSettingsAvatar": "R15",
+        "CharacterUseJumpPower": true
+      },
+      "StarterCharacterScripts": {
+        "Health": {
+          "$className": "Script"
+        }
+      }
+    },
+    "Workspace": {
+      "$properties": {
+        "FilteringEnabled": true,
+        "AuthorityMode": "Server",
+        "NextGenerationReplication": "Enabled",
+        "PlayerScriptsUseInputActionSystem": "Enabled",
+        "SignalBehavior": "Deferred",
+        "UseFixedSimulation": "Enabled",
+        "StreamingEnabled": true
+      },
+      "Terrain": {
+        "$properties": {
+          "Decoration": true,
+          "GrassLength": 1
+        }
+      }
+    },
+    "Lighting": {
+      "$properties": {
+        "GlobalShadows": true,
+        "Technology": "Future"
+      }
+    },
+    "Players": {
+      "$properties": {
+        "CharacterAutoLoads": false
+      }
+    }
+  }
+}

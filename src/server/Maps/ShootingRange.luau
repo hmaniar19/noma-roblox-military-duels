@@ -104,8 +104,8 @@ return function(origin: Vector3): MapKit.MapInfo
 		Vector3.new(30, 3, 20),
 		Vector3.new(-78, 3, 0),
 		Vector3.new(78, 3, 0),
-		Vector3.new(-24, 3, -54),
-		Vector3.new(24, 3, -54),
+		Vector3.new(-24, 3, -46), -- in front of the firing-lane rail, not inside a lane divider
+		Vector3.new(24, 3, -46),
 		Vector3.new(-10, 3, 50),
 		Vector3.new(10, 3, 58),
 		Vector3.new(-40, 6, 32),

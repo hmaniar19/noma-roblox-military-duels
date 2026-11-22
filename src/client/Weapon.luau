@@ -419,12 +419,15 @@ local function followTeammate(camera: Camera)
 		return
 	end
 	local candidates: { Instance } = {}
+	local arena = player:GetAttribute("Arena")
 	for _, other in Players:GetPlayers() do
-		table.insert(candidates, other.Character :: any)
+		-- Teammates only from this match: every arena's characters carry a Team attribute.
+		if other:GetAttribute("Arena") == arena then
+			table.insert(candidates, other.Character :: any)
+		end
 	end
 	-- Bots live in a folder per arena (Bots/<ArenaId>).
 	local bots = workspace:FindFirstChild("Bots")
-	local arena = player:GetAttribute("Arena")
 	local mine = if bots and typeof(arena) == "string" then bots:FindFirstChild(arena) else nil
 	for _, bot in (if mine then mine:GetChildren() else {}) :: { Instance } do
 		table.insert(candidates, bot)
@@ -445,6 +448,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 	local camera = workspace.CurrentCamera
 	if not Weapon.inCombat() then
 		viewmodel.Parent = nil
+		vmId = nil -- rebuild next match, so a skin equipped in the lobby shows
 		firing = false
 		setAiming(false)
 		camera.FieldOfView = 70
