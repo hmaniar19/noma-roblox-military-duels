@@ -386,34 +386,61 @@ end
 
 local KEY_SLOTS = { [Enum.KeyCode.One] = 1, [Enum.KeyCode.Two] = 2, [Enum.KeyCode.Three] = 3 }
 
+local function cycleSlot(step: number?)
+	local index, count = slotIndex()
+	if count > 1 then
+		equipSlot((index - 1 + (step or 1)) % count + 1)
+	end
+end
+
+local function throwGadget()
+	if Weapon.inCombat() and (player:GetAttribute("GadgetLeft") or 0) > 0 then
+		Gadget:FireServer(workspace.CurrentCamera.CFrame.LookVector)
+	end
+end
+
+local function reload()
+	local id, w = Weapon.current()
+	if Weapon.inCombat() and id and w and w.kind == "gun" and (player:GetAttribute("Ammo") or 0) < w.magazine then
+		Reload:FireServer()
+	end
+end
+
+-- Crouch while sprinting slides; otherwise it toggles crouch.
+local function crouch()
+	if Weapon.inCombat() then
+		local stance = player:GetAttribute("Stance")
+		Stance:FireServer(if stance == "Sprint" then "Slide" elseif stance == "Crouch" then "Stand" else "Crouch")
+	end
+end
+
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then
 		return
 	end
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+	local key = input.KeyCode
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or key == Enum.KeyCode.ButtonR2 then
 		firing = true
 		tryFire()
-	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+	elseif input.UserInputType == Enum.UserInputType.MouseButton2 or key == Enum.KeyCode.ButtonL2 then
 		aimHeld = true
 		setAiming(true)
-	elseif KEY_SLOTS[input.KeyCode] then
-		equipSlot(KEY_SLOTS[input.KeyCode])
-	elseif input.KeyCode == Enum.KeyCode.G or input.KeyCode == Enum.KeyCode.Four then
-		if Weapon.inCombat() and (player:GetAttribute("GadgetLeft") or 0) > 0 then
-			Gadget:FireServer(workspace.CurrentCamera.CFrame.LookVector)
-		end
-	elseif input.KeyCode == Enum.KeyCode.R then
-		local id, w = Weapon.current()
-		if Weapon.inCombat() and id and w and w.kind == "gun" and (player:GetAttribute("Ammo") or 0) < w.magazine then
-			Reload:FireServer()
-		end
-	elseif input.KeyCode == Enum.KeyCode.LeftShift and Weapon.inCombat() then
+	elseif KEY_SLOTS[key] then
+		equipSlot(KEY_SLOTS[key])
+	elseif key == Enum.KeyCode.ButtonY then
+		cycleSlot()
+	elseif key == Enum.KeyCode.G or key == Enum.KeyCode.Four or key == Enum.KeyCode.DPadUp then
+		throwGadget()
+	elseif key == Enum.KeyCode.R or key == Enum.KeyCode.ButtonX then
+		reload()
+	elseif key == Enum.KeyCode.LeftShift and Weapon.inCombat() then
 		Stance:FireServer("Sprint")
-	elseif input.KeyCode == Enum.KeyCode.C and Weapon.inCombat() then
-		-- C while sprinting slides; otherwise it toggles crouch.
-		local stance = player:GetAttribute("Stance")
-		Stance:FireServer(if stance == "Sprint" then "Slide" elseif stance == "Crouch" then "Stand" else "Crouch")
-	elseif input.KeyCode == Enum.KeyCode.Space and Weapon.inCombat() then
+	elseif key == Enum.KeyCode.ButtonL3 and Weapon.inCombat() then
+		-- No stick-click hold on a gamepad, so L3 toggles sprint instead of holding it.
+		Stance:FireServer(if player:GetAttribute("Stance") == "Sprint" then "Stand" else "Sprint")
+	elseif key == Enum.KeyCode.C or key == Enum.KeyCode.ButtonB then
+		crouch()
+	elseif key == Enum.KeyCode.Space and Weapon.inCombat() then
 		-- A second press in mid-air is the double jump (the server allows one per landing).
 		local humanoid = (player.Character :: Model):FindFirstChildOfClass("Humanoid")
 		if humanoid and humanoid.FloorMaterial == Enum.Material.Air then
@@ -425,23 +452,61 @@ end)
 
 UserInputService.InputChanged:Connect(function(input, processed)
 	if not processed and input.UserInputType == Enum.UserInputType.MouseWheel then
-		local index, count = slotIndex()
-		if count > 1 then
-			equipSlot((index - 1 + (if input.Position.Z < 0 then 1 else -1)) % count + 1)
-		end
+		cycleSlot(if input.Position.Z < 0 then 1 else -1)
 	end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.ButtonR2 then
 		firing = false
-	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+	elseif input.UserInputType == Enum.UserInputType.MouseButton2 or input.KeyCode == Enum.KeyCode.ButtonL2 then
 		aimHeld = false
 		setAiming(false)
 	elseif input.KeyCode == Enum.KeyCode.LeftShift and player:GetAttribute("Stance") == "Sprint" then
 		Stance:FireServer("Stand")
 	end
 end)
+
+-- Touch combat buttons, clear of the default jump button (bottom-right, up to ~210px tall).
+local touchGui = if UserInputService.TouchEnabled then Instance.new("ScreenGui") else nil
+if touchGui then
+	touchGui.Name, touchGui.ResetOnSpawn, touchGui.Enabled = "TouchCombat", false, false
+	local function button(text: string, x: number, y: number, size: number): TextButton
+		local b = Instance.new("TextButton")
+		b.AnchorPoint, b.Position, b.Size = Vector2.new(1, 1), UDim2.new(1, x, 1, y), UDim2.fromOffset(size, size)
+		b.BackgroundColor3, b.BackgroundTransparency = Color3.new(0, 0, 0), 0.45
+		b.Text, b.TextColor3, b.Font, b.TextScaled = text, Color3.new(1, 1, 1), Enum.Font.GothamBold, true
+		b.Parent = touchGui
+		return b
+	end
+	local fireTouch: InputObject? = nil
+	button("FIRE", -190, -30, 90).InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch then
+			fireTouch = input
+			firing = true
+			tryFire()
+		end
+	end)
+	-- Global TouchEnded: the finger may slide off the button before lifting.
+	UserInputService.TouchEnded:Connect(function(input)
+		if input == fireTouch then
+			firing = false
+		end
+	end)
+	local function toggleAim()
+		aimHeld = not aimHeld
+		setAiming(aimHeld)
+	end
+	local labels = { "AIM", "RELOAD", "SWAP", "GADGET", "CROUCH" }
+	local actions: { () -> () } = { toggleAim, reload, cycleSlot, throwGadget, crouch }
+	for i, label in labels do
+		-- Wrapped: Activated passes an InputObject, which cycleSlot would take as its step.
+		button(label, -20 - (i - 1) * 64, -230, 56).Activated:Connect(function()
+			actions[i]()
+		end)
+	end
+	touchGui.Parent = player:WaitForChild("PlayerGui")
+end
 
 player:GetAttributeChangedSignal("Reloading"):Connect(function()
 	if player:GetAttribute("Reloading") then
@@ -493,7 +558,12 @@ local nextFollowCheck = 0
 RunService.RenderStepped:Connect(function(dt: number)
 	Weapon.scoped = false
 	local camera = workspace.CurrentCamera
-	if not Weapon.inCombat() then
+	local fighting = Weapon.inCombat()
+	if touchGui and touchGui.Enabled ~= fighting then
+		touchGui.Enabled = fighting
+		aimHeld = false -- AIM is a toggle on touch; every life starts unaimed
+	end
+	if not fighting then
 		viewmodel.Parent = nil
 		vmId = nil -- rebuild next match, so a skin equipped in the lobby shows
 		firing = false
