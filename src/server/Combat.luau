@@ -349,8 +349,12 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 			return -- fired from a position the server just corrected
 		end
 		local reason = rejectClaim(c, origin, aimDir)
-		if reason then
+		if reason == "shot direction does not match look direction" then
+			AntiCheat.flagAim(c, aimDir, reason)
+		elseif reason then
 			AntiCheat.flag(c, reason)
+		end
+		if reason then
 			return
 		end
 		-- Aim at what's under the crosshair, then shoot it from the server's eye so the small

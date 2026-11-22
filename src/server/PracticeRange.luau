@@ -81,7 +81,7 @@ function PracticeRange.new(info: RangeInfo, lobbyMin: Vector3, lobbyMax: Vector3
 		if (current ~= nil and current ~= ID) or player:GetAttribute("Queued") or not root or not humanoid then
 			return -- in (or queued for) a real match
 		end
-		if humanoid.Health <= 0 then
+		if humanoid.Health <= 0 or not inside((root :: BasePart).Position, info.min, info.max) then
 			return
 		end
 		local c = Combatants.byPlayer(player)

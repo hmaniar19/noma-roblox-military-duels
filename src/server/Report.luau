@@ -87,6 +87,11 @@ local function submit(player: Player, target: number?): boolean
 	end
 	local time = os.time()
 	local rows = snapshot(ring, now() - KEEP_SECONDS * 10)
+	local seen = false -- only someone who was actually in the logged match can be the target
+	for _, row in rows do
+		seen = seen or (row[1] == "p" and row[4] == target)
+	end
+	target = if seen then target else nil
 	local payload =
 		{ reporter = player.UserId, target = target, time = time, map = arenaId, units = UNITS, rows = rows }
 	local key = `report_{time}_{player.UserId}`

@@ -90,11 +90,30 @@ end
 -- A shot must point roughly where the player was actually looking a moment ago. Stops silent aim,
 -- where a tool fires at the enemy while the camera points somewhere else. The yaw is checked against
 -- the body's facing, which the server simulates (first-person characters turn with the camera);
--- the reported look history covers pitch, which has no server-side source.
+-- the reported look history covers pitch, which has no server-side source. Any facing within the
+-- lag-compensation window counts, because the server's copy of a fast flick arrives late.
+local function facedRecently(c: Combatants.Combatant, flat: Vector3): boolean
+	local function near(cf: CFrame): boolean
+		local face = cf.LookVector
+		return Hitbox.angleBetween(flat, Vector3.new(face.X, 0, face.Z)) <= AC.MaxYawAngle
+	end
+	if near(c.root.CFrame) then
+		return true
+	end
+	local since = os.clock() - AC.MaxRewind - 0.15
+	for i = #c.historyT, 1, -1 do
+		if c.historyT[i] < since then
+			break
+		elseif near(c.historyCF[i]) then
+			return true
+		end
+	end
+	return false
+end
+
 function AntiCheat.aimMatches(c: Combatants.Combatant, dir: Vector3): boolean
 	local flat = Vector3.new(dir.X, 0, dir.Z)
-	local face = c.root.CFrame.LookVector
-	if flat.Magnitude > 0.2 and Hitbox.angleBetween(flat, Vector3.new(face.X, 0, face.Z)) > AC.MaxYawAngle then
+	if flat.Magnitude > 0.2 and not facedRecently(c, flat) then
 		return false
 	end
 	local now = os.clock()
@@ -108,6 +127,17 @@ function AntiCheat.aimMatches(c: Combatants.Combatant, dir: Vector3): boolean
 		end
 	end
 	return false
+end
+
+-- A shot whose direction didn't match is dropped at once, but only flagged if the body still hasn't
+-- turned that way a moment later: the server's copy of a fast flick arrives late.
+function AntiCheat.flagAim(c: Combatants.Combatant, dir: Vector3, reason: string)
+	local flat = Vector3.new(dir.X, 0, dir.Z)
+	task.delay(AC.MaxRewind, function()
+		if c.alive and (flat.Magnitude <= 0.2 or not facedRecently(c, flat)) then
+			AntiCheat.flag(c, reason)
+		end
+	end)
 end
 
 local function inside(p: Vector3, lo: Vector3, hi: Vector3): boolean
