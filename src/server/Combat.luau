@@ -433,8 +433,12 @@ function Combat.bind()
 			return
 		end
 		-- Remote-level spam cap first, so malformed spam is capped too; weapon cadence is in Combat.fire.
-		if not Net.allow(player, "Fire", AC.MaxShotsPerSecond, 2) then
-			AntiCheat.flag(c, "Fire remote spam")
+		-- Network hitches deliver shots in bunches, so extra packets are just dropped; only a flood far
+		-- beyond any weapon (a second, much looser bucket) counts as a cheat flag.
+		if not Net.allow(player, "Fire", AC.MaxShotsPerSecond, 8) then
+			if not Net.allow(player, "FireFlood", AC.MaxShotsPerSecond, 24) then
+				AntiCheat.flag(c, "Fire remote spam")
+			end
 			return
 		end
 		if not Net.isVector(origin, 1e4) or not Net.isDirection(dir) then
