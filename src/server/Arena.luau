@@ -4,9 +4,11 @@
 -- countdown plays together (bots fill empty slots). A match is first to 5 round wins. Each round:
 -- an 8-second freeze to pick a loadout, 2:00 live, then a win, loss or draw. Sides swap every round;
 -- at 4-4 each team plays Sudden Death with one sniper and one knife. A player who leaves is replaced
--- by a bot; a team with no players left forfeits. After the match everyone returns to the lobby.
+-- by a bot and the match counts as their loss; a team with no players left forfeits. After the match
+-- everyone returns to the lobby. A player in Bot Bootcamp only ever plays alone against perfect bots.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local AntiCheat = require(script.Parent.AntiCheat)
 local Bot = require(script.Parent.Bot)
 local Celebration = require(script.Parent.Celebration)
 local Combat = require(script.Parent.Combat)
@@ -80,6 +82,8 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	-- The latest elimination by someone else, for the round-end cutscenes (bullet cam, finisher).
 	local lastKill: { attacker: Combatant, victim: Combatant, weapon: string?, from: Vector3, to: Vector3 }? = nil
 	local kills: { [Player]: number } = {} -- eliminations this match, for XP
+	local matchStart = 0 -- os.clock() when the match began, for counting flags
+	local perfectBots = false -- a Bot Bootcamp match: every bot plays perfectly
 	local endCelebration: (() -> ())? = nil -- tears down a celebration in progress
 
 	local function setPhase(phase: string)
@@ -234,7 +238,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		if not player then
 			task.spawn(Bot.run, c, info.waypoints, function()
 				return living(other(c.team))
-			end)
+			end, perfectBots)
 		end
 		return c
 	end
@@ -585,6 +589,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				if ranked and e.ranked then
 					Economy.ranked(player, won)
 				end
+				Economy.matchResult(player, won, AntiCheat.flagsSince(player, matchStart) == 0)
 			end
 		end
 	end
@@ -592,6 +597,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	local function playMatch()
 		local scores: Scores = { Navy = 0, Grey = 0 }
 		table.clear(kills)
+		matchStart = os.clock()
 		state:SetAttribute("NavyScore", 0)
 		state:SetAttribute("GreyScore", 0)
 		state:SetAttribute("NavyName", teamNames("Navy"))
@@ -688,10 +694,21 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			perTeam = if state:GetAttribute("Mode") == "2v2" then 2 else 1
 			if #queue == 0 then
 				return false -- everyone left during the countdown
-			elseif #queue >= perTeam * 2 then
-				break -- full: no need to wait
+			elseif #queue >= perTeam * 2 or state:GetAttribute("Bootcamp") then
+				break -- full (a Bot Bootcamp queue is full with its one player): no need to wait
 			end
 			task.wait(0.2)
+		end
+		-- Someone flagged into Bot Bootcamp while waiting here can't share a match with other players.
+		if not state:GetAttribute("Bootcamp") then
+			for i = #queue, 1, -1 do
+				if queue[i]:GetAttribute("Bootcamp") then
+					local out = table.remove(queue, i) :: Player
+					out:SetAttribute("Queued", nil)
+					Net.Toast:FireClient(out, "Bot Bootcamp", "Queue again to play your bootcamp match.")
+				end
+			end
+			setQueued()
 		end
 		if #queue == 0 then
 			return false -- the last one left as the countdown ended
@@ -700,6 +717,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		forfeit = nil
 		decided = false
 		roster = {}
+		perfectBots = state:GetAttribute("Bootcamp") == true
 		local botNumber = 0
 		local humans: { Player } = {}
 		local botEntries: { Entry } = {}
@@ -710,7 +728,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				player:SetAttribute("Queued", nil)
 				player:SetAttribute("Arena", id)
 				table.insert(humans, player)
-				local ranked = player:GetAttribute("Ranked") == true
+				local ranked = player:GetAttribute("Ranked") == true and not perfectBots
 				table.insert(
 					roster,
 					{ player = player, team = team, name = player.DisplayName, ranked = ranked } :: Entry
@@ -741,11 +759,18 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				return
 			end
 			-- The first in line picks the mode and ranked or casual; both stay fixed while the next
-			-- match is assembling, and only players with the same ranked setting can join it.
+			-- match is assembling, and only players with the same ranked setting can join it. A Bot
+			-- Bootcamp player only takes an empty queue and locks it: nobody else joins their match.
 			local ranked = player:GetAttribute("Ranked") == true
+			local bootcamp = player:GetAttribute("Bootcamp") == true
 			if #queue == 0 and state:GetAttribute("Phase") ~= "Starting" then
 				state:SetAttribute("Mode", if mode == "2v2" then "2v2" else "1v1")
-				state:SetAttribute("Ranked", ranked)
+				state:SetAttribute("Ranked", ranked and not bootcamp)
+				state:SetAttribute("Bootcamp", bootcamp)
+			elseif bootcamp or state:GetAttribute("Bootcamp") == true then
+				local why = if bootcamp then "Bot Bootcamp is solo." else "A Bot Bootcamp match is starting."
+				Net.Toast:FireClient(player, "Map busy", `{why} Pick a map with nobody queued.`)
+				return
 			elseif (state:GetAttribute("Ranked") == true) ~= ranked then
 				local kind = if ranked then "casual" else "ranked"
 				Net.Toast:FireClient(player, "Queue is " .. kind, "Pick another map, or switch RANKED to match.")
@@ -766,7 +791,8 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			if not entry or decided or state:GetAttribute("Phase") == "MatchEnd" then
 				return
 			end
-			-- The leaver's slot goes to a bot from next round on; their character is out now.
+			-- Leaving mid-match is a saved loss; the leaver's slot goes to a bot from next round on.
+			Economy.matchResult(player, false, false)
 			if entry.ranked then
 				entry.ranked = false
 				Economy.ranked(player, false)

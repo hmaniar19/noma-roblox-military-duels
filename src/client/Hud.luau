@@ -16,6 +16,7 @@ local state = require(script.Parent.ArenaState)
 local HitConfirm = remotes:WaitForChild("HitConfirm") :: RemoteEvent
 local Damaged = remotes:WaitForChild("Damaged") :: RemoteEvent
 local Banner = remotes:WaitForChild("Banner") :: RemoteEvent
+local ReportRemote = remotes:WaitForChild("Report") :: RemoteEvent
 
 local FONT = Enum.Font.GothamBlack
 local NAVY = Config.Teams.Navy
@@ -120,6 +121,37 @@ round(healthFill, 6)
 local healthText = text(healthBack, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Vector2.zero, 18)
 local teamLabel = text(gui, UDim2.fromOffset(300, 22), UDim2.new(0, 24, 1, -58), Vector2.new(0, 1), 16)
 teamLabel.TextXAlignment = Enum.TextXAlignment.Left
+-- REPORT (above the team label): in a match and for a minute after it, hidden for a minute once sent.
+local function button(parent: Instance, position: UDim2, label: string, onClick: () -> ()): TextButton
+	local b = Instance.new("TextButton")
+	b.Size, b.Position, b.AnchorPoint = UDim2.fromOffset(80, 24), position, Vector2.new(0, 1)
+	b.BackgroundColor3, b.BackgroundTransparency, b.BorderSizePixel = Color3.fromRGB(12, 16, 24), 0.25, 0
+	b.Font, b.TextSize, b.TextColor3, b.Text = FONT, 13, Color3.new(1, 1, 1), label
+	b.Modal = parent ~= gui -- the confirm frees the first-person mouse while it is up
+	b.Parent = parent
+	round(b, 6)
+	b.Activated:Connect(onClick)
+	return b
+end
+local confirmBox =
+	frame(UDim2.fromOffset(184, 72), UDim2.new(0, 24, 1, -112), Vector2.new(0, 1), Color3.fromRGB(12, 16, 24), 0.25)
+round(confirmBox, 8)
+confirmBox.Visible = false
+local question = text(confirmBox, UDim2.new(1, -16, 0, 32), UDim2.fromOffset(8, 4), Vector2.zero, 13)
+question.Text, question.TextWrapped = "Report the last round for review?", true
+local reportUntil, sentUntil, wasInMatch = 0, 0, false
+local foes: { [number]: boolean } = {} -- human opponents in the current or last match
+local reportButton = button(gui, UDim2.new(0, 24, 1, -84), "REPORT", function()
+	confirmBox.Visible = true
+end)
+button(confirmBox, UDim2.new(0, 8, 1, -8), "REPORT", function()
+	local first = next(foes)
+	ReportRemote:FireServer(if first and next(foes, first) == nil then first else nil)
+	confirmBox.Visible, sentUntil = false, os.clock() + 60
+end)
+button(confirmBox, UDim2.new(0, 96, 1, -8), "CANCEL", function()
+	confirmBox.Visible = false
+end)
 local ammoText = text(gui, UDim2.fromOffset(240, 50), UDim2.new(1, -24, 1, -40), Vector2.new(1, 1), 40)
 ammoText.TextXAlignment = Enum.TextXAlignment.Right
 local hint = text(
@@ -422,6 +454,23 @@ RunService.RenderStepped:Connect(function()
 	shield.Visible = combat and (healing or player:GetAttribute("Shielded") == true)
 	local showing = os.clock() < bannerUntil
 	bannerTitle.Visible, bannerSub.Visible = showing, showing
+	local arena = player:GetAttribute("Arena")
+	local inMatch = arena ~= nil and arena ~= "Practice"
+	if inMatch then
+		reportUntil = os.clock() + 60
+		if not wasInMatch then
+			table.clear(foes)
+		end
+		for _, other in Players:GetPlayers() do
+			local theirs = other:GetAttribute("Team")
+			if team and theirs and theirs ~= team and other:GetAttribute("Arena") == arena then
+				foes[other.UserId] = true
+			end
+		end
+	end
+	wasInMatch = inMatch
+	reportButton.Visible = os.clock() < reportUntil and os.clock() > sentUntil
+	confirmBox.Visible = confirmBox.Visible and reportButton.Visible
 end)
 
 return {}

@@ -32,6 +32,7 @@ Net.Shop = event("Shop")
 Net.Reload = event("Reload")
 Net.Aim = event("Aim")
 Net.Look = event("Look")
+Net.Report = event("Report")
 -- server -> client
 Net.ShotFx = event("ShotFx")
 Net.HitConfirm = event("HitConfirm")

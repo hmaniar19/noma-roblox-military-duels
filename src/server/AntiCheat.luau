@@ -2,46 +2,81 @@
 -- Server-side checks on what players claim. Movement itself is server-authoritative: the place runs
 -- with Workspace.AuthorityMode = Server, so the server simulates every character from inputs and
 -- speed, fly and teleport hacks can't move it. This module checks shot claims (look vs aim) and
--- keeps everyone inside the map. Every rejection adds a cheat flag; penalties come in phase 6.
+-- keeps everyone inside the map. Every rejection adds to a decaying suspicion score; a player whose
+-- score reaches Config.AntiCheat.FlagThreshold is sent to Bot Bootcamp.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Combatants = require(script.Parent.Combatants)
 local Config = require(ReplicatedStorage.Shared.Config)
+local Economy = require(script.Parent.Economy)
 local Hitbox = require(ReplicatedStorage.Shared.Hitbox)
+local Net = require(script.Parent.Net)
 
 local AC = Config.AntiCheat
 
 local AntiCheat = {}
 
-export type Flag = { t: number, reason: string }
+export type Flag = { t: number, reason: string } -- t is os.clock()
 local log: { [Player]: { Flag } } = {}
-local counts: { [Player]: number } = {}
+local scores: { [Player]: { value: number, at: number } } = {} -- the score as of os.clock() `at`
 local lastWarn: { [Player]: number } = {}
 
--- Counts every rejection; keeps the 50 most recent reasons and warns at most twice a second.
+local function weight(reason: string): number
+	for prefix, w in AC.FlagWeights do
+		if string.sub(reason, 1, #prefix) == prefix then
+			return w
+		end
+	end
+	return AC.FlagDefaultWeight
+end
+
+local function score(player: Player, now: number): number
+	local s = scores[player]
+	return if s then math.max(0, s.value - AC.FlagDecayPerMinute * (now - s.at) / 60) else 0
+end
+
+-- Scores every rejection; keeps the 50 most recent reasons and warns at most twice a second.
 function AntiCheat.flag(c: Combatants.Combatant, reason: string)
 	local player = c.player
 	if not player then
 		return
 	end
+	local now = os.clock()
 	local entries = log[player] or {}
 	log[player] = entries
-	table.insert(entries, { t = os.time(), reason = reason })
+	table.insert(entries, { t = now, reason = reason })
 	if #entries > 50 then
 		table.remove(entries, 1)
 	end
-	counts[player] = (counts[player] or 0) + 1
-	player:SetAttribute("CheatFlags", counts[player])
-	if os.clock() - (lastWarn[player] or 0) > 0.5 then
-		lastWarn[player] = os.clock()
-		warn(`[AntiCheat] {player.Name} ({player.UserId}): {reason} (total {counts[player]})`)
+	local value = score(player, now) + weight(reason)
+	scores[player] = { value = value, at = now }
+	player:SetAttribute("CheatFlags", math.floor(value))
+	if value >= AC.FlagThreshold and not player:GetAttribute("Bootcamp") then
+		Economy.setBootcamp(player, true)
+		Net.Toast:FireClient(player, "Bot Bootcamp", `{Config.BootcampCleanMatches} clean matches in a row to get out`)
+	end
+	if now - (lastWarn[player] or 0) > 0.5 then
+		lastWarn[player] = now
+		warn(`[AntiCheat] {player.Name} ({player.UserId}): {reason} (score {math.floor(value)})`)
 	end
 end
 
+-- How many flags the player has collected since os.clock() time `t` (a clean match has none).
+function AntiCheat.flagsSince(player: Player, t: number): number
+	local n = 0
+	local entries: { Flag } = log[player] or {}
+	for _, f in entries do
+		if f.t >= t then
+			n += 1
+		end
+	end
+	return n
+end
+
 Players.PlayerRemoving:Connect(function(player)
-	log[player], counts[player], lastWarn[player] = nil, nil, nil
+	log[player], scores[player], lastWarn[player] = nil, nil, nil
 end)
 
 function AntiCheat.recordLook(c: Combatants.Combatant, dir: Vector3)
@@ -128,6 +163,20 @@ function AntiCheat.start()
 		for _, c in Combatants.all() do
 			if c.alive and not c.root.Anchored and c.root.Parent then
 				check(c, now, false)
+			end
+		end
+	end)
+	-- The published score drains too, not only when the next flag lands.
+	task.spawn(function()
+		while true do
+			task.wait(5)
+			local now = os.clock()
+			for player in scores do
+				local value = score(player, now)
+				player:SetAttribute("CheatFlags", math.floor(value))
+				if value <= 0 then
+					scores[player] = nil
+				end
 			end
 		end
 	end)

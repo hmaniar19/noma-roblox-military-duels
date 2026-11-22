@@ -12,6 +12,7 @@ local Gun = require(ReplicatedStorage.Shared.Gun)
 local Hitbox = require(ReplicatedStorage.Shared.Hitbox)
 local Profile = require(ReplicatedStorage.Shared.Profile)
 local Net = require(script.Parent.Net)
+local Report = require(script.Parent.Report)
 
 type Combatant = Combatants.Combatant
 
@@ -376,6 +377,7 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 		local wall = workspace:Raycast(origin, aimDir * w.range, occlusion())
 		local victim, zone = trace(c, origin, aimDir, if wall then wall.Distance else w.range, rewind)
 		Net.ShotFx:FireAllClients(c.model, origin, origin, false, true)
+		Report.shot(c, origin, aimDir, if victim then victim.name else nil, zone)
 		if victim and zone then
 			Combat.damage(victim, w.damage, c, zone :: Config.Zone, id)
 		end
@@ -389,7 +391,7 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 	local spread = (if c.aiming then w.spreadAim else w.spreadHip) + (if moving then w.spreadMoving else 0)
 	local RANK = { Head = 3, Body = 2, Legs = 1 }
 	local dealt: { [Combatant]: number } = {}
-	local bestZone: Config.Zone?, anyKilled = nil, false
+	local bestZone: Config.Zone?, anyKilled, firstVictim: string? = nil, false, nil
 	for _ = 1, w.pellets do
 		local dir = Hitbox.spread(aimDir, spread, rng)
 		local wallHit = workspace:Raycast(origin, dir * w.range, occlusion())
@@ -401,6 +403,7 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 			local killed = Combat.damage(victim, amount, c, hitZone, id, true)
 			if killed ~= nil then
 				dealt[victim] = (dealt[victim] or 0) + amount
+				firstVictim = firstVictim or victim.name
 				anyKilled = anyKilled or killed
 				if not bestZone or (RANK[hitZone] or 0) > (RANK[bestZone] or 0) then
 					bestZone = hitZone
@@ -408,6 +411,7 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 			end
 		end
 	end
+	Report.shot(c, origin, aimDir, firstVictim, bestZone)
 	-- One hit marker for the shooter, one damage event per victim.
 	for victim, amount in dealt do
 		Combat.notify(c, victim, bestZone, anyKilled, amount)

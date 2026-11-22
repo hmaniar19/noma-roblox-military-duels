@@ -24,6 +24,10 @@ type Profile = {
 	finisher: string, -- Config.Finishers id
 	starter: string?, -- starter weapon; nil until the first-join pick
 	starterSkin: string?, -- free starter colour, usable only on the starter weapon
+	bootcamp: boolean, -- Bot Bootcamp: flagged for cheating, matched only against perfect bots
+	cleanStreak: number, -- zero-flag matches in a row while in Bot Bootcamp
+	wins: number,
+	losses: number, -- leaving mid-match counts as a loss
 }
 
 local Economy = {}
@@ -112,6 +116,8 @@ local function publish(player: Player, p: Profile)
 	player:SetAttribute("StarterPicked", p.starter ~= nil)
 	player:SetAttribute("HudTheme", p.hudTheme or Config.HudThemes[1].id)
 	player:SetAttribute("ThemePicked", p.hudTheme ~= nil) -- false shows the first-join picker
+	player:SetAttribute("Bootcamp", p.bootcamp)
+	player:SetAttribute("CleanStreak", p.cleanStreak)
 	local owned, skins = folder(player, "Owned"), folder(player, "Skins")
 	for id in CATALOG do
 		owned:SetAttribute(id, if owns(player, p, id) then true else nil)
@@ -276,6 +282,10 @@ local function load(player: Player)
 		finisher = known(field(data, "finisher", "string"), Config.Finishers) or Config.Finishers[1].id,
 		starter = known(field(data, "starter", "string"), Config.Starter.Weapons),
 		starterSkin = known(field(data, "starterSkin", "string"), Config.Starter.Colors),
+		bootcamp = field(data, "bootcamp", "boolean") == true,
+		cleanStreak = math.min(count(data, "cleanStreak", 0), Config.BootcampCleanMatches),
+		wins = count(data, "wins", 0),
+		losses = count(data, "losses", 0),
 	}
 	p.owned.Standard = true
 	if player.Parent == nil then
@@ -342,6 +352,40 @@ function Economy.ranked(player: Player, won: boolean)
 		return
 	end
 	p.rp = math.max(0, p.rp + (if won then Config.RankedSwing else -Config.RankedSwing))
+	publish(player, p)
+	markDirty(player)
+end
+
+-- Bot Bootcamp on (flagged by AntiCheat) or off. Either way the clean-match count starts over.
+function Economy.setBootcamp(player: Player, on: boolean)
+	local p = profiles[player]
+	if not p or p.bootcamp == on then
+		return
+	end
+	p.bootcamp, p.cleanStreak = on, 0
+	publish(player, p)
+	markDirty(player)
+end
+
+-- Every finished or abandoned match. In Bot Bootcamp a clean match (zero flags) counts toward
+-- getting out and any other match starts the count over.
+function Economy.matchResult(player: Player, won: boolean, clean: boolean)
+	local p = profiles[player]
+	if not p then
+		return
+	end
+	if won then
+		p.wins += 1
+	else
+		p.losses += 1
+	end
+	if p.bootcamp then
+		p.cleanStreak = if clean then p.cleanStreak + 1 else 0
+		if p.cleanStreak >= Config.BootcampCleanMatches then
+			p.bootcamp, p.cleanStreak = false, 0
+			Net.Toast:FireClient(player, "Out of Bot Bootcamp!", "You're back in matches with other players.")
+		end
+	end
 	publish(player, p)
 	markDirty(player)
 end
@@ -474,8 +518,11 @@ function Economy.bind()
 		task.spawn(load, player)
 	end
 	Players.PlayerRemoving:Connect(function(player)
-		flush(player, true)
-		profiles[player], loaded[player], dirty[player], lastSave[player] = nil, nil, nil, nil
+		-- Deferred so the other leave handlers run first: Lobby saves a mid-match leave as a loss.
+		task.defer(function()
+			flush(player, true)
+			profiles[player], loaded[player], dirty[player], lastSave[player] = nil, nil, nil, nil
+		end)
 	end)
 	task.spawn(function()
 		local refreshed = os.clock()

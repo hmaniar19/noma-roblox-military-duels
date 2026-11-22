@@ -263,6 +263,7 @@ local Config = {
 	} :: { { level: number, kind: string, id: string, name: string } },
 	RankedStart = 1000, -- Rank Points for a new ranked player; a win moves 25 points from loser to winner
 	RankedSwing = 25,
+	BootcampCleanMatches = 3, -- clean (zero-flag) matches in a row that end Bot Bootcamp
 
 	-- Finisher inks (Shop > FINISHERS): the ink color of your round-win anime finisher's slashes and splatter.
 	Finishers = {
@@ -418,11 +419,24 @@ local Config = {
 		MaxRewind = 0.35, -- seconds of lag compensation
 		MaxYawAngle = 60, -- degrees between shot yaw and the server-simulated body facing (fast flicks lag it)
 		CheckInterval = 0.25,
+		-- Each flag adds a suspicion score by reason (matched by prefix; FlagDefaultWeight otherwise).
+		-- The score drains steadily, so lag blips never add up; reaching the threshold means Bot Bootcamp.
+		FlagThreshold = 15,
+		FlagDecayPerMinute = 4,
+		FlagDefaultWeight = 1,
+		FlagWeights = {
+			["out of bounds"] = 3,
+			["shot direction does not match look direction"] = 1,
+			["shot origin"] = 2,
+			["Fire remote spam"] = 2,
+			["malformed"] = 5,
+		} :: { [string]: number },
 	},
 
 	Bot = {
 		Name = "Recruit Bot",
 		ReactionTime = 0.75, -- seconds from spotting you to the first shot
+		PerfectReactionTime = 0.2, -- Bot Bootcamp bots: no aim error, no burst pause
 		AimErrorDegrees = 5, -- base miss cone; grows with distance. Settled: ~58% body hits at 20 studs, ~16% at 40
 		AimSettleSeconds = 1.5, -- aim starts up to twice as wide and settles over this long
 		MovingTargetPenalty = 1.6, -- extra miss cone against a running target
