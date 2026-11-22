@@ -363,7 +363,11 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 		local sight = workspace:Raycast(origin, aimDir * w.range, occlusion())
 		local aimPoint = if sight then sight.Position else origin + aimDir * w.range
 		local fromEye = aimPoint - Combat.headPosition(c)
-		aimDir = if fromEye.Magnitude > 0.5 then fromEye else aimDir
+		-- The re-aimed ray may only correct camera/eye parallax (a few degrees), never steer the shot:
+		-- otherwise a spoofed origin could bend an aim-checked direction toward a target.
+		if fromEye.Magnitude > 0.5 and Hitbox.angleBetween(fromEye.Unit, aimDir) <= 10 then
+			aimDir = fromEye
+		end
 	end
 	origin = Combat.headPosition(c)
 	aimDir = aimDir.Unit
