@@ -7,6 +7,7 @@ local DataStoreService = game:GetService("DataStoreService")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local Loadout = require(script.Parent.Loadout)
@@ -297,11 +298,17 @@ local function load(player: Player)
 	profiles[player], loaded[player] = p, readOk
 	if okStore and not readOk then
 		Net.Toast:FireClient(player, "Progress not saving", "Your coins and XP will last for this visit only.")
+		-- Without the saved record we can't know whether this account is in Bot Bootcamp, so live
+		-- servers keep it to bot matches for this visit (never saved). Studio has no saves to read.
+		if not RunService:IsStudio() then
+			p.bootcamp = true
+		end
 	end
 	if p.starter then
 		Loadout.choose(player, "Primary", p.starter)
 	end
-	if not p.beginnersLuck then
+	-- An unread profile may already have had its grant: only a verified (or Studio) profile gets it.
+	if not p.beginnersLuck and (readOk or not okStore or RunService:IsStudio()) then
 		p.beginnersLuck = true
 		p.coins += Config.Payouts.BeginnersLuck
 		Net.Toast:FireClient(player, "beginnersluck", `+{Config.Payouts.BeginnersLuck} coins to get you started!`)
