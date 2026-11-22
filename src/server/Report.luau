@@ -9,7 +9,7 @@ local RunService = game:GetService("RunService")
 local Combatants = require(script.Parent.Combatants)
 local Net = require(script.Parent.Net)
 
-type Log = { match: string, round: number, rows: { { any } } }
+type Log = { map: string, match: string, round: number, rows: { { any } }, done: boolean }
 
 local SAMPLE_SECONDS = 0.2
 -- A 2:00 round plus its ride is ~130 s; 4 fighters at 5 Hz plus shots stays far under this cap, and
@@ -24,8 +24,10 @@ local okStore, store = pcall(function()
 	return DataStoreService:GetDataStore("MilitaryDuels_Reports")
 end)
 local current: { [string]: Log } = {}
-local last: { [string]: Log } = {}
-local lastArena: { [Player]: string } = setmetatable({}, { __mode = "k" }) :: any
+-- The newest round each player appeared in, and the one before it: a report always carries a round
+-- the reporter actually played, never a later match on the same map.
+local newest: { [Player]: Log } = setmetatable({}, { __mode = "k" }) :: any
+local previous: { [Player]: Log } = setmetatable({}, { __mode = "k" }) :: any
 
 local function now(): number
 	return math.round(workspace:GetServerTimeNow() * 10)
@@ -44,12 +46,14 @@ end
 
 -- Called by the arena when a round starts and when it ends.
 function Report.roundStart(arenaId: string, match: string, round: number)
-	current[arenaId] = { match = match, round = round, rows = {} }
+	current[arenaId] = { map = arenaId, match = match, round = round, rows = {}, done = false }
 end
 
 function Report.roundEnd(arenaId: string)
-	if current[arenaId] then
-		last[arenaId], current[arenaId] = current[arenaId], nil
+	local log = current[arenaId]
+	if log then
+		log.done = true
+		current[arenaId] = nil
 	end
 end
 
@@ -68,8 +72,9 @@ local function record()
 			if current[id] then
 				local x, y, z = ints(c.root.Position, 10)
 				push(id, { "p", t, c.name, if c.player then c.player.UserId else 0, c.team, x, y, z, c.alive })
-				if c.player then
-					lastArena[c.player] = id
+				local player = c.player
+				if player and newest[player] ~= current[id] then
+					previous[player], newest[player] = newest[player], current[id]
 				end
 			end
 		end
@@ -77,9 +82,13 @@ local function record()
 end
 
 local function submit(player: Player, target: number?): boolean
-	local arenaId = lastArena[player]
-	local log = if arenaId then last[arenaId] or current[arenaId] else nil
-	if not arenaId or not log then
+	-- The last completed round; while one is still in progress, the round before it (or, in the first
+	-- round of a match, the one in progress).
+	local log = newest[player]
+	if log and not log.done and previous[player] then
+		log = previous[player]
+	end
+	if not log then
 		return false
 	end
 	local seen = false -- only someone who was actually in the logged round can be the target
@@ -91,7 +100,7 @@ local function submit(player: Player, target: number?): boolean
 		reporter = player.UserId,
 		target = if seen then target else nil,
 		time = time,
-		map = arenaId,
+		map = log.map,
 		match = log.match,
 		round = log.round,
 		units = UNITS,
