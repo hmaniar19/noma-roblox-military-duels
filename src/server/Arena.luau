@@ -1,7 +1,7 @@
 --!strict
--- One arena per map, all running at once. Players queue for a map from the Camp More Maniar lobby; the
--- first player to queue picks 1v1 or 2v2, and everyone who queues for the same map within the
--- countdown plays together (bots fill empty slots). A match is first to 5 round wins. Each round:
+-- One arena per map, all running at once. Players queue for a map and a mode (1v1 or 2v2) from the
+-- Camp More Maniar lobby; everyone who queues for the same map and mode plays together (bots fill
+-- empty slots). A match is first to 5 round wins. Each round:
 -- an 8-second freeze to pick a loadout, 2:00 live, then a win, loss or draw. Sides swap every round;
 -- at 4-4 each team plays Sudden Death with one sniper and one knife. A player who leaves is replaced
 -- by a bot and the match counts as their loss; a team with no players left forfeits. After the match
@@ -75,6 +75,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	rides.Parent = stagingRoot
 
 	local queue: { Player } = {}
+	local modeOf: { [Player]: string } = {} -- each queued player's chosen mode
 	local roster: { Entry } = {}
 	local forfeit: TeamId? = nil
 	local decided = false
@@ -681,8 +682,19 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		end
 	end
 
-	-- The first players in the queue fill the teams (alternating Navy, Grey) and leave the queue;
-	-- bots take the empty slots. Anyone still queued waits for the next match.
+	-- Players queue for 1v1 or 2v2 separately. The next match takes the mode of whoever has waited
+	-- longest and fills from players who chose that mode (alternating Navy, Grey); bots take the empty
+	-- slots. Everyone else keeps their place for the next match.
+	local function waitingFor(mode: string): { Player }
+		local out = {}
+		for _, p in queue do
+			if modeOf[p] == mode then
+				table.insert(out, p)
+			end
+		end
+		return out
+	end
+
 	local function pickRoster(): boolean
 		while #queue == 0 do
 			setPhase("Waiting")
@@ -691,13 +703,16 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		state:SetAttribute("StartsAt", workspace:GetServerTimeNow() + Config.QueueSeconds)
 		setPhase("Starting")
 		local starts = os.clock() + Config.QueueSeconds
-		local perTeam = 1
+		local mode, perTeam = "1v1", 1
 		-- A ranked queue never fills with bots: it waits for enough ranked players.
-		while os.clock() < starts or state:GetAttribute("Ranked") and #queue < perTeam * 2 do
-			perTeam = if state:GetAttribute("Mode") == "2v2" then 2 else 1
+		while os.clock() < starts or state:GetAttribute("Ranked") and #waitingFor(mode) < perTeam * 2 do
 			if #queue == 0 then
 				return false -- everyone left during the countdown
-			elseif #queue >= perTeam * 2 or state:GetAttribute("Bootcamp") then
+			end
+			mode = modeOf[queue[1]] or "1v1"
+			perTeam = if mode == "2v2" then 2 else 1
+			state:SetAttribute("Mode", mode)
+			if #waitingFor(mode) >= perTeam * 2 or state:GetAttribute("Bootcamp") then
 				break -- full (a Bot Bootcamp queue is full with its one player): no need to wait
 			end
 			task.wait(0.2)
@@ -707,13 +722,15 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			for i = #queue, 1, -1 do
 				if queue[i]:GetAttribute("Bootcamp") then
 					local out = table.remove(queue, i) :: Player
+					modeOf[out] = nil
 					out:SetAttribute("Queued", nil)
 					Net.Toast:FireClient(out, "Bot Bootcamp", "Queue again to play your bootcamp match.")
 				end
 			end
 			setQueued()
 		end
-		if #queue == 0 then
+		local picked = waitingFor(mode)
+		if #picked == 0 then
 			return false -- the last one left as the countdown ended
 		end
 		-- A new match: from here a leaver's side can forfeit (Friends.pick below may yield).
@@ -726,8 +743,10 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		local botEntries: { Entry } = {}
 		for i = 1, perTeam * 2 do
 			local team: TeamId = if i % 2 == 1 then "Navy" else "Grey"
-			local player = table.remove(queue, 1)
+			local player = picked[i]
 			if player then
+				table.remove(queue, table.find(queue, player) :: number)
+				modeOf[player] = nil
 				player:SetAttribute("Queued", nil)
 				player:SetAttribute("Arena", id)
 				table.insert(humans, player)
@@ -761,13 +780,12 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			if table.find(queue, player) then
 				return
 			end
-			-- The first in line picks the mode and ranked or casual; both stay fixed while the next
-			-- match is assembling, and only players with the same ranked setting can join it. A Bot
-			-- Bootcamp player only takes an empty queue and locks it: nobody else joins their match.
+			-- The first in line picks ranked or casual; it stays fixed while the queue is non-empty, and
+			-- only players with the same ranked setting can join it. A Bot Bootcamp player only takes an
+			-- empty queue and locks it: nobody else joins their match.
 			local ranked = player:GetAttribute("Ranked") == true
 			local bootcamp = player:GetAttribute("Bootcamp") == true
 			if #queue == 0 and state:GetAttribute("Phase") ~= "Starting" then
-				state:SetAttribute("Mode", if mode == "2v2" then "2v2" else "1v1")
 				state:SetAttribute("Ranked", ranked and not bootcamp)
 				state:SetAttribute("Bootcamp", bootcamp)
 			elseif bootcamp or state:GetAttribute("Bootcamp") == true then
@@ -779,12 +797,14 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				Net.Toast:FireClient(player, "Queue is " .. kind, "Pick another map, or switch RANKED to match.")
 				return
 			end
+			modeOf[player] = if mode == "2v2" then "2v2" else "1v1"
 			table.insert(queue, player)
 			player:SetAttribute("Queued", id)
 			setQueued()
 		end,
 		leave = function(player)
 			local i = table.find(queue, player)
+			modeOf[player] = nil
 			if i then
 				table.remove(queue, i)
 				player:SetAttribute("Queued", nil)
