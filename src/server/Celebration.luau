@@ -67,8 +67,14 @@ local function firework(folder: Instance, from: Vector3, color: Color3)
 	local apex = from + Vector3.new(math.random(-6, 6), math.random(22, 30), math.random(-4, 4))
 	local steps = 20
 	for i = 1, steps do
+		if not shell.Parent then
+			return
+		end
 		shell.Position = from:Lerp(apex, i / steps)
 		task.wait(0.03)
+	end
+	if not shell.Parent then
+		return
 	end
 	shell.Transparency = 1
 	local burst = Instance.new("ParticleEmitter")
@@ -116,6 +122,7 @@ function Celebration.play(
 		table.insert(if m.team == winner then winners else losers, m)
 	end
 
+	local finished = false
 	local function spawn(m: Member, cf: CFrame): Model?
 		local model: Model? = nil
 		pcall(function()
@@ -127,6 +134,13 @@ function Celebration.play(
 				model = Rig.spawnBot(m.team, m.name, cf, botsFolder, m.userId)
 			end
 		end)
+		if finished then
+			-- The celebration ended during the spawn: a bot is ours to remove; a player is left alone.
+			if model and not m.player then
+				model:Destroy()
+			end
+			return nil
+		end
 		if model then
 			(model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") :: BasePart).Anchored = true
 		end
@@ -146,6 +160,9 @@ function Celebration.play(
 			task.wait(1.6)
 			local dance = Rig.animate(model, "dance", true)
 			task.wait(2.4)
+			if finished then
+				return
+			end
 			if dance then
 				dance:Stop(0.3)
 			end
@@ -211,6 +228,7 @@ function Celebration.play(
 	return stage.Position + Vector3.new(0, 3, 0),
 		function()
 			running = false
+			finished = true
 			for _, m in members do
 				if m.player then
 					m.player:SetAttribute("Celebrating", nil)

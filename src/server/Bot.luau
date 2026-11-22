@@ -64,7 +64,7 @@ local function visiblePoint(c: Combatant, enemy: Combatant): Vector3?
 	local params = Combat.occlusion()
 	for _, offset in { BODY_OFFSET, Config.Hitboxes[1].offset } do
 		local point = (enemy.root.CFrame * CFrame.new(offset)).Position
-		if not workspace:Raycast(eye, point - eye, params) and not Gadgets.smokeBlocks(eye, point) then
+		if not workspace:Raycast(eye, point - eye, params) and not Gadgets.smokeBlocks(eye, point, c.arena.id) then
 			return point
 		end
 	end

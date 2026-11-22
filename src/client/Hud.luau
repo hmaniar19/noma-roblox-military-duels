@@ -252,7 +252,9 @@ Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 	elseif kind == "MatchEnd" then
 		local score = `{data.navy} - {data.grey}`
 		local how = if data.forfeit then "Opponent left the match" else score
-		if team then
+		if data.winner == "Draw" then
+			showBanner("MATCH DRAWN", `Round limit reached · {score}`, GOLD, Config.MatchEndSeconds)
+		elseif team then
 			local won = data.winner == team
 			showBanner(if won then "VICTORY" else "DEFEAT", how, if won then GOLD else LOSE, Config.MatchEndSeconds)
 		else
@@ -283,7 +285,7 @@ Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 	end
 end)
 
-local hitSerial = 0
+local hitSerial, headshotSerial = 0, 0
 HitConfirm.OnClientEvent:Connect(function(zone: Config.Zone, killed: boolean)
 	hitSerial += 1
 	local serial = hitSerial
@@ -300,12 +302,14 @@ HitConfirm.OnClientEvent:Connect(function(zone: Config.Zone, killed: boolean)
 	end)
 	if zone == "Head" then
 		Weapon.sound(Config.Sounds.Headshot, gui, 0.7)
+		headshotSerial += 1
+		local flash = headshotSerial
 		headshot.Visible = true
 		headshot.TextTransparency = 0
 		headshot.TextSize = 60
 		TweenService:Create(headshot, TweenInfo.new(0.6), { TextTransparency = 1, TextSize = 46 }):Play()
 		task.delay(0.6, function()
-			headshot.Visible = headshot.Visible and serial ~= hitSerial
+			headshot.Visible = headshot.Visible and flash ~= headshotSerial
 		end)
 	else
 		Weapon.sound(Config.Sounds.Hit, gui, 0.4)

@@ -189,7 +189,7 @@ end
 
 function Combat.reload(c: Combatant)
 	local id = Combatants.weapon(c)
-	if not id or not c.alive or c.reloading then
+	if not id or not c.alive or c.reloading or c.healingUntil > 0 then
 		return
 	end
 	local w = Config.Weapons[id]
@@ -254,18 +254,20 @@ function Combat.damage(target: Combatant, amount: number, attacker: Combatant, z
 		target.healingUntil = 0 -- taking damage interrupts a med kit
 		Combatants.sync(target)
 	end
-	if attacker.player and attacker ~= target then
-		Net.HitConfirm:FireClient(attacker.player, zone, killed)
-	end
-	if target.player then
-		Net.Damaged:FireClient(target.player, attacker.root.Position, amount)
-	end
+	local from = attacker.root.Position
 	if killed then
 		target.alive = false
 		if Combatants.weapon(attacker) == "MothersWrath" then
 			wrathStrike(target.root.Position)
 		end
 		target.arena.onElimination(target, attacker, zone)
+	end
+	local hitBy, hurt = attacker.player, target.player
+	if hitBy and attacker ~= target and hitBy.Parent ~= nil then
+		pcall(Net.HitConfirm.FireClient, Net.HitConfirm, hitBy, zone, killed)
+	end
+	if hurt and hurt.Parent ~= nil then
+		pcall(Net.Damaged.FireClient, Net.Damaged, hurt, from, amount)
 	end
 end
 
@@ -389,13 +391,13 @@ function Combat.bind()
 		if not c then
 			return
 		end
-		if not Net.isVector(origin, 1e4) or not Net.isDirection(dir) then
-			AntiCheat.flag(c, "malformed Fire payload")
-			return
-		end
-		-- Remote-level spam cap; each weapon's own cadence is enforced in Combat.fire.
+		-- Remote-level spam cap first, so malformed spam is capped too; weapon cadence is in Combat.fire.
 		if not Net.allow(player, "Fire", AC.MaxShotsPerSecond, 2) then
 			AntiCheat.flag(c, "Fire remote spam")
+			return
+		end
+		if not Net.isVector(origin, 1e4) or not Net.isDirection(dir) then
+			AntiCheat.flag(c, "malformed Fire payload")
 			return
 		end
 		Combat.fire(c, origin, dir)

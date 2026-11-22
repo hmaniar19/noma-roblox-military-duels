@@ -40,11 +40,23 @@ gui.Parent = player:WaitForChild("PlayerGui")
 local BAR_WIDTH = 1340
 local fit = Instance.new("UIScale")
 fit.Parent = gui
+local viewportConn: RBXScriptConnection?
 local function refit()
-	fit.Scale = math.min(1, workspace.CurrentCamera.ViewportSize.X / (BAR_WIDTH + 40))
+	local camera = workspace.CurrentCamera
+	if camera then
+		fit.Scale = math.min(1, camera.ViewportSize.X / (BAR_WIDTH + 40))
+	end
 end
-workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(refit)
-refit()
+local function watchCamera()
+	if viewportConn then
+		viewportConn:Disconnect()
+	end
+	local camera = workspace.CurrentCamera
+	viewportConn = camera and camera:GetPropertyChangedSignal("ViewportSize"):Connect(refit)
+	refit()
+end
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(watchCamera)
+watchCamera()
 
 local panels: { Frame } = {} -- frames painted with the theme's panel color
 local function frame(parent: Instance, size: UDim2, pos: UDim2, anchor: Vector2?, color: Color3?): Frame
@@ -311,6 +323,13 @@ end
 -- Settings: the HUD color theme (also opens by itself on a player's first join).
 local settingsPanel = modal("SETTINGS  ·  HUD colors")
 settingsPanel.Size = UDim2.fromOffset(840, 330)
+-- Closing the first-join picker keeps the default theme, so onboarding still moves on to the starter.
+local settingsClose = settingsPanel:FindFirstChildOfClass("TextButton") :: TextButton
+settingsClose.Activated:Connect(function()
+	if player:GetAttribute("ThemePicked") == false then
+		SettingsRemote:FireServer("Theme", Theme.current().id)
+	end
+end)
 for i, t in Config.HudThemes do
 	local x, y = (i - 1) % 3, (i - 1) // 3
 	local card = button(
@@ -375,7 +394,7 @@ starterPanel.Size = UDim2.fromOffset(840, 330)
 local starterClose = starterPanel:FindFirstChildOfClass("TextButton") :: TextButton
 starterClose:Destroy()
 local starterWeapon, starterColor = Config.Starter.Weapons[1], Config.Starter.Colors[1]
-local starterSent = false
+local starterSentAt = -math.huge
 local starterStrokes: { [string]: UIStroke } = {}
 local function starterButton(id: string, text: string, pos: UDim2, size: UDim2, pick: () -> ()): TextButton
 	local b = button(starterPanel, size, pos, text, function()
@@ -413,8 +432,11 @@ for i, id in Config.Starter.Colors do
 	end
 end
 local confirm = button(starterPanel, UDim2.fromOffset(220, 50), UDim2.new(0.5, -110, 1, -66), "CONFIRM", function()
-	SettingsRemote:FireServer("Starter", starterWeapon, starterColor)
-	starterSent = true
+	-- The panel hides once the server sets StarterPicked; until then a retry is allowed every 3 s.
+	if os.clock() - starterSentAt >= 3 then
+		SettingsRemote:FireServer("Starter", starterWeapon, starterColor)
+		starterSentAt = os.clock()
+	end
 end)
 confirm.BackgroundColor3 = GO
 
@@ -443,8 +465,11 @@ Theme.watch(function(t)
 	showTab(currentTab)
 end)
 
-local function clock(seconds: number): string
-	return tostring(math.max(0, math.ceil(seconds)))
+local function clock(startsAt: any, now: number): string
+	if type(startsAt) ~= "number" then
+		return "soon"
+	end
+	return `in {math.max(0, math.ceil(startsAt - now))}`
 end
 
 -- Refresh -------------------------------------------------------------------------------------------
@@ -456,9 +481,9 @@ RunService.RenderStepped:Connect(function()
 	status.Visible = inLobby or practicing
 	settingsButton.Visible, emotesButton.Visible, levelBox.Visible = inLobby, inLobby, inLobby
 	starterPanel.Visible = inLobby
-		and not starterSent
 		and player:GetAttribute("StarterPicked") == false
 		and player:GetAttribute("ThemePicked") ~= false
+	confirm.Text = if os.clock() - starterSentAt < 3 then "SAVING..." else "CONFIRM"
 	leaveRange.Visible = practicing
 	if practicing then
 		status.Text = "PRACTICE RANGE · shoot the targets · walk off the range or press LEAVE RANGE to stop"
@@ -497,7 +522,7 @@ RunService.RenderStepped:Connect(function()
 		local count = (a and a:GetAttribute("Queued") or 0) :: number
 		local mode = a and a:GetAttribute("Mode") or "1v1"
 		card.info.Text = if phase == "Starting"
-			then `{count} queued · {mode} starts in {clock((a :: Instance):GetAttribute("StartsAt") - now)}`
+			then `{count} queued · {mode} starts {clock((a :: Instance):GetAttribute("StartsAt"), now)}`
 			elseif phase and phase ~= "Waiting" then `Match in progress · {count} waiting`
 			else (if count > 0 then `{count} queued · {mode}` else "Nobody queued yet")
 		local picked = m.id == (queued or selectedMap)
@@ -513,7 +538,7 @@ RunService.RenderStepped:Connect(function()
 		local mode = a and a:GetAttribute("Mode") or selectedMode
 		local phase = a and a:GetAttribute("Phase")
 		status.Text = if phase == "Starting"
-			then `Queued for {mapName} ({mode}) · starting in {clock((a :: Instance):GetAttribute("StartsAt") - now)}`
+			then `Queued for {mapName} ({mode}) · starting {clock((a :: Instance):GetAttribute("StartsAt"), now)}`
 			elseif phase == "Waiting" then `Queued for {mapName} ({mode})`
 			else `Queued for {mapName} · the current match there finishes first`
 		play.Text, play.BackgroundColor3 = "LEAVE", STOP

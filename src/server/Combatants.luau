@@ -54,6 +54,7 @@ local Combatants = {}
 local SYNCED = { "Weapon", "Slots", "Ammo", "Reloading", "Gadget", "GadgetLeft", "Healing", "Shielded", "Stance" }
 
 local list: { Combatant } = {}
+local watchers: { [Combatant]: RBXScriptConnection } = {}
 
 function Combatants.new(
 	arena: ArenaHooks,
@@ -63,14 +64,19 @@ function Combatants.new(
 	model: Model,
 	spawn: CFrame
 ): Combatant
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	local root = model:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not root or not root:IsA("BasePart") then
+		error(`Combatants.new: {model:GetFullName()} has no Humanoid or HumanoidRootPart`)
+	end
 	local c: Combatant = {
 		arena = arena,
 		name = name,
 		player = player,
 		team = team,
 		model = model,
-		humanoid = model:FindFirstChildOfClass("Humanoid") :: Humanoid,
-		root = model:FindFirstChild("HumanoidRootPart") :: BasePart,
+		humanoid = humanoid,
+		root = root,
 		alive = true,
 		weapons = {},
 		equipped = 1,
@@ -95,6 +101,11 @@ function Combatants.new(
 	}
 	model:SetAttribute("Team", team)
 	table.insert(list, c)
+	watchers[c] = model.AncestryChanged:Connect(function()
+		if not model:IsDescendantOf(game) then
+			c.alive = false
+		end
+	end)
 	return c
 end
 
@@ -109,6 +120,11 @@ end
 local function retire(c: Combatant)
 	c.alive = false
 	c.reloadToken += 1
+	local watcher = watchers[c]
+	if watcher then
+		watcher:Disconnect()
+		watchers[c] = nil
+	end
 	if c.player then
 		for _, key in SYNCED do
 			c.player:SetAttribute(key, nil)

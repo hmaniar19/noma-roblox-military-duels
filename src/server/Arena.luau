@@ -24,7 +24,8 @@ local Rig = require(script.Parent.Rig)
 type Combatant = Combatants.Combatant
 type TeamId = Config.TeamId
 -- `userId` on a bot entry: the friend whose avatar and name the bot wears.
-type Entry = { player: Player?, team: TeamId, name: string, combatant: Combatant?, userId: number? }
+-- `ranked`: the player's Ranked attribute when the roster was picked.
+type Entry = { player: Player?, team: TeamId, name: string, combatant: Combatant?, userId: number?, ranked: boolean? }
 type Result = TeamId | "Draw"
 type Scores = { Navy: number, Grey: number }
 
@@ -79,6 +80,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	-- The latest elimination by someone else, for the round-end cutscenes (bullet cam, finisher).
 	local lastKill: { attacker: Combatant, victim: Combatant, from: Vector3, to: Vector3 }? = nil
 	local kills: { [Player]: number } = {} -- eliminations this match, for XP
+	local endCelebration: (() -> ())? = nil -- tears down a celebration in progress
 
 	local function setPhase(phase: string)
 		state:SetAttribute("Phase", phase)
@@ -191,22 +193,33 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 
 	local function spawnEntry(entry: Entry, cf: CFrame): Combatant?
 		local model: Model?
+		local player, name = entry.player, entry.name
 		local ok, err = pcall(function()
-			if entry.player then
-				entry.player.CameraMode = Enum.CameraMode.LockFirstPerson
-				entry.player:SetAttribute("Team", entry.team)
-				model = Rig.spawnPlayer(entry.player, entry.team, cf)
+			if player then
+				player.CameraMode = Enum.CameraMode.LockFirstPerson
+				player:SetAttribute("Team", entry.team)
+				model = Rig.spawnPlayer(player, entry.team, cf)
 			else
-				model = Rig.spawnBot(entry.team, entry.name, cf, bots, entry.userId)
+				model = Rig.spawnBot(entry.team, name, cf, bots, entry.userId)
 			end
 		end)
 		if not ok then
-			warn(`[Arena {id}] could not spawn {entry.name}: {err}`)
+			warn(`[Arena {id}] could not spawn {name}: {err}`)
+		end
+		if player and entry.player ~= player then
+			-- They left while their character loaded: a bot takes the slot instead.
+			if model then
+				model:Destroy()
+			end
+			player, name, model = nil, entry.name, nil
+			pcall(function()
+				model = Rig.spawnBot(entry.team, name, cf, bots, entry.userId)
+			end)
 		end
 		if not model then
 			return nil
 		end
-		local c = Combatants.new(hooks, entry.name, entry.player, entry.team, model, cf)
+		local c = Combatants.new(hooks, name, player, entry.team, model, cf)
 		c.root.Anchored = true
 		c.humanoid.Died:Once(function()
 			if c.alive then
@@ -216,7 +229,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			end
 			latchIfWiped()
 		end)
-		if not entry.player then
+		if not player then
 			task.spawn(Bot.run, c, info.waypoints, function()
 				return living(other(c.team))
 			end)
@@ -234,11 +247,21 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	-- Cutscenes play on the clients, but the server starts them and holds the next round until every
 	-- player in the match has reported finishing (or a grace period passes). Stale tokens are ignored.
 	local cutsceneToken = 0
+	local waiting: { [Player]: boolean } = {}
+	Net.CutsceneDone.OnServerEvent:Connect(function(player, t)
+		if
+			type(t) == "number"
+			and t == cutsceneToken
+			and waiting[player]
+			and Net.allow(player, "CutsceneDone", 4, 4)
+		then
+			waiting[player] = nil
+		end
+	end)
 	local function cutscene(kind: string, data: { [string]: any }, seconds: number)
 		cutsceneToken += 1
-		local token = cutsceneToken
-		data.token, data.seconds = token, seconds
-		local waiting: { [Player]: boolean } = {}
+		data.token, data.seconds = cutsceneToken, seconds
+		table.clear(waiting)
 		for _, e in roster do
 			if e.player and e.player.Parent then
 				waiting[e.player] = true
@@ -246,11 +269,6 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			end
 		end
 		local anyone = next(waiting) ~= nil
-		local done = Net.CutsceneDone.OnServerEvent:Connect(function(player, t)
-			if t == token then
-				waiting[player] = nil
-			end
-		end)
 		local started = os.clock()
 		local deadline = started + seconds + Config.CutsceneGraceSeconds
 		while os.clock() < deadline do
@@ -259,13 +277,14 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 					waiting[player] = nil
 				end
 			end
-			-- With nobody watching (a bots-only match), still let the moment play out.
-			if next(waiting) == nil and (anyone or os.clock() - started >= seconds) then
+			local elapsed = os.clock() - started
+			-- Never before 70% of the scene; with nobody watching (bots only), let it play out fully.
+			if next(waiting) == nil and elapsed >= seconds * 0.7 and (anyone or elapsed >= seconds) then
 				break
 			end
 			task.wait(0.1)
 		end
-		done:Disconnect()
+		table.clear(waiting)
 	end
 
 	local function characters(): { Instance }
@@ -337,12 +356,16 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 					local side = if i == 1 then -1 else 1
 					local start = center + Vector3.new(0, 3, side * 10)
 					local userId = if e.player then e.player.UserId else e.userId
-					local model =
-						Rig.spawnBot(team, e.name, CFrame.lookAt(start, center + Vector3.new(0, 3, 0)), rides, userId)
-					local actorRoot = model:FindFirstChild("HumanoidRootPart") :: BasePart
-					model.PrimaryPart = actorRoot
-					actorRoot.Anchored = true
-					table.insert(actors, model)
+					local cf = CFrame.lookAt(start, center + Vector3.new(0, 3, 0))
+					local ok, model = pcall(Rig.spawnBot, team, e.name, cf, rides, userId)
+					local actorRoot = if ok and model then model:FindFirstChild("HumanoidRootPart") else nil
+					if actorRoot and actorRoot:IsA("BasePart") then
+						model.PrimaryPart = actorRoot
+						actorRoot.Anchored = true
+						table.insert(actors, model)
+					elseif ok and model then
+						model:Destroy()
+					end
 					break
 				end
 			end
@@ -355,10 +378,12 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			local steps = 36
 			for s = 1, steps do
 				for i, a in actors do
-					local side = if i == 1 then -1 else 1
-					local z = side * (10 - 8.4 * s / steps)
-					local p = center + Vector3.new(0, 3, z)
-					a:PivotTo(CFrame.lookAt(p, p - Vector3.new(0, 0, side)))
+					if a.Parent then
+						local side = if i == 1 then -1 else 1
+						local z = side * (10 - 8.4 * s / steps)
+						local p = center + Vector3.new(0, 3, z)
+						a:PivotTo(CFrame.lookAt(p, p - Vector3.new(0, 0, side)))
+					end
 				end
 				task.wait(0.05)
 			end
@@ -378,8 +403,10 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			end
 			for beat = 0, 16 do
 				for _, s in shoulders do
-					local bob = if beat > 3 then math.sin(beat * 1.6) * 0.12 else 0
-					s.joint.C0 = s.rest * CFrame.Angles(math.rad(75) + bob, 0, 0)
+					if s.joint.Parent then
+						local bob = if beat > 3 then math.sin(beat * 1.6) * 0.12 else 0
+						s.joint.C0 = s.rest * CFrame.Angles(math.rad(75) + bob, 0, 0)
+					end
 				end
 				task.wait(0.1)
 			end
@@ -435,14 +462,16 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				local standIn: Entry = { player = nil, team = entry.team, name = `{Config.Bot.Name} (stand-in)` }
 				entry.combatant = spawnEntry(standIn, cf)
 			end
-			if not entry.combatant and not forfeit then
-				-- A side that can't field anyone loses the match rather than leaving a one-sided round.
-				forfeit = entry.team
-			end
 			if entry.combatant then
 				local group = if entry.team == "Navy" then navyRide else greyRide
 				table.insert(group.spawns, cf)
 				table.insert(group.riders, entry.combatant)
+			end
+		end
+		-- A side that can't field anyone loses the match rather than leaving a one-sided round.
+		for _, g in { navyRide, greyRide } do
+			if #g.riders == 0 and not forfeit then
+				forfeit = g.team
 			end
 		end
 		armAll()
@@ -461,6 +490,8 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			task.wait(0.05)
 		end
 		if forfeit then
+			-- Removing the vehicles ends the ride for anyone still aboard.
+			rides:ClearAllChildren()
 			return nil
 		end
 
@@ -512,8 +543,18 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	-- Noelle's rules: the winners earn 120 if the match-winning elimination was a headshot, else 80
 	-- (a forfeit win counts as 80); the losers earn 10 for each round they won. Everyone who finishes
 	-- earns XP (more for a win and per elimination), and ranked players gain or lose rank points.
-	local function payout(winner: TeamId, scores: Scores, headshot: boolean)
+	local function payout(winner: Result, scores: Scores, headshot: boolean)
 		local P, X = Config.Payouts, Config.Xp
+		-- Rank points move only between human teams that both entered ranked.
+		local rankedTeams: { [string]: boolean } = {}
+		local anyBot = false
+		for _, e in roster do
+			anyBot = anyBot or e.player == nil
+			if e.ranked then
+				rankedTeams[e.team] = true
+			end
+		end
+		local ranked = winner ~= "Draw" and not anyBot and rankedTeams.Navy and rankedTeams.Grey
 		for _, e in roster do
 			local player = e.player
 			if player and player.Parent then
@@ -524,8 +565,11 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				elseif scores[e.team] > 0 then
 					Economy.award(player, P.LoserPerRound * scores[e.team], `{scores[e.team]} round(s) won`)
 				end
-				Economy.awardXp(player, X.Finish + (if won then X.Win else 0) + X.Elimination * (kills[player] or 0))
-				Economy.ranked(player, won)
+				local earned = if winner == "Draw" then 0 else X.Elimination * (kills[player] or 0)
+				Economy.awardXp(player, X.Finish + (if won then X.Win else 0) + earned)
+				if ranked and e.ranked then
+					Economy.ranked(player, won)
+				end
 			end
 		end
 	end
@@ -548,7 +592,12 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 
 		local round = 0
 		local result: Result? = nil
-		while scores.Navy < Config.RoundsToWin and scores.Grey < Config.RoundsToWin and not forfeit do
+		while
+			scores.Navy < Config.RoundsToWin
+			and scores.Grey < Config.RoundsToWin
+			and not forfeit
+			and round < Config.MaxRounds
+		do
 			round += 1
 			result = playRound(round, scores)
 			if not result then
@@ -569,34 +618,46 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			end
 		end
 
-		local winner: TeamId = if decided
-			then (if scores.Navy >= Config.RoundsToWin then "Navy" else "Grey")
-			else other(forfeit or "Navy")
+		-- A forfeit gives the other side the match; otherwise (including the round cap) the score decides.
+		local winner: Result = if forfeit
+			then other(forfeit)
+			elseif scores.Navy > scores.Grey then "Navy"
+			elseif scores.Grey > scores.Navy then "Grey"
+			else "Draw"
+		decided = true
 		setPhase("MatchEnd")
 		state:SetAttribute("Winner", winner)
-		banner("MatchEnd", { winner = winner, navy = scores.Navy, grey = scores.Grey, forfeit = not decided })
-		payout(winner, scores, decided and lastZone == "Head")
+		banner("MatchEnd", { winner = winner, navy = scores.Navy, grey = scores.Grey, forfeit = forfeit ~= nil })
+		payout(winner, scores, not forfeit and lastZone == "Head")
+		table.clear(kills)
+		lastKill = nil
 		-- The fight is over: the celebration stage replaces the field for everyone in the match.
 		clearField()
-		local members: { Celebration.Member } = {}
-		for _, e in roster do
-			local player = if e.player and e.player.Parent then e.player else nil
-			local kit = Loadout.standard(player)
-			table.insert(members, {
-				player = player,
-				team = e.team,
-				name = e.name,
-				userId = e.userId,
-				primary = kit.weapons[1],
-				melee = kit.weapons[3],
-			})
+		if winner ~= "Draw" then
+			local members: { Celebration.Member } = {}
+			for _, e in roster do
+				local player = if e.player and e.player.Parent then e.player else nil
+				local kit = Loadout.standard(player)
+				table.insert(members, {
+					player = player,
+					team = e.team,
+					name = e.name,
+					userId = e.userId,
+					primary = kit.weapons[1],
+					melee = kit.weapons[3],
+				})
+			end
+			local center = (info.boundsMin + info.boundsMax) / 2
+			local ground = Vector3.new(center.X, info.boundsMin.Y + 12, center.Z)
+			local focus, finish = Celebration.play(ground, winner :: TeamId, members, bots)
+			endCelebration = finish
+			banner("Celebrate", { focus = focus, seconds = Config.MatchEndSeconds })
+			task.wait(Config.MatchEndSeconds)
+			endCelebration = nil
+			finish()
+		else
+			task.wait(Config.RoundEndSeconds)
 		end
-		local center = (info.boundsMin + info.boundsMax) / 2
-		local ground = Vector3.new(center.X, info.boundsMin.Y + 12, center.Z)
-		local focus, finish = Celebration.play(ground, winner, members, bots)
-		banner("Celebrate", { focus = focus, seconds = Config.MatchEndSeconds })
-		task.wait(Config.MatchEndSeconds)
-		finish()
 		clearField()
 		local leaving = roster
 		roster = {}
@@ -627,6 +688,9 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			end
 			task.wait(0.2)
 		end
+		if #queue == 0 then
+			return false -- the last one left as the countdown ended
+		end
 		-- A new match: from here a leaver's side can forfeit (Friends.pick below may yield).
 		forfeit = nil
 		decided = false
@@ -641,7 +705,11 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				player:SetAttribute("Queued", nil)
 				player:SetAttribute("Arena", id)
 				table.insert(humans, player)
-				table.insert(roster, { player = player, team = team, name = player.DisplayName } :: Entry)
+				local ranked = player:GetAttribute("Ranked") == true
+				table.insert(
+					roster,
+					{ player = player, team = team, name = player.DisplayName, ranked = ranked } :: Entry
+				)
 			else
 				botNumber += 1
 				local name = if perTeam == 1 then Config.Bot.Name else `{Config.Bot.Name} {botNumber}`
@@ -687,6 +755,10 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				return
 			end
 			-- The leaver's slot goes to a bot from next round on; their character is out now.
+			if entry.ranked then
+				entry.ranked = false
+				Economy.ranked(player, false)
+			end
 			entry.player = nil
 			entry.name = `{Config.Bot.Name} (sub)`
 			if entry.combatant then
@@ -712,7 +784,30 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	task.spawn(function()
 		while true do
 			if pickRoster() then
-				playMatch()
+				local ok = xpcall(playMatch, function(err)
+					warn(`[Arena {id}] match failed: {err}\n{debug.traceback()}`)
+				end)
+				if not ok then
+					if endCelebration then
+						pcall(endCelebration)
+						endCelebration = nil
+					end
+					pcall(clearField)
+					table.clear(kills)
+					lastKill = nil
+					for _, key in { "RoundEndsAt", "FreezeEndsAt", "Winner", "SuddenDeath" } do
+						state:SetAttribute(key, nil)
+					end
+					setPhase("Waiting")
+					local leaving = roster
+					roster = {}
+					for _, e in leaving do
+						if e.player and e.player.Parent then
+							e.player:SetAttribute("Celebrating", nil)
+							task.spawn(toLobby, e.player)
+						end
+					end
+				end
 			end
 			task.wait()
 		end

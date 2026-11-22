@@ -22,6 +22,7 @@ type Profile = {
 	ranked: boolean, -- the player's ranked toggle
 	finisher: string, -- Config.Finishers id
 	starter: string?, -- starter weapon; nil until the first-join pick
+	starterSkin: string?, -- free starter colour, usable only on the starter weapon
 }
 
 local Economy = {}
@@ -119,65 +120,137 @@ local function publish(player: Player, p: Profile)
 	end
 end
 
+-- One write in flight per player; markDirty queues a save that the loop in bind sends at most every
+-- SAVE_GAP seconds. `session` and `sessionStart` stop a stale server overwriting a newer session's save.
+local SAVE_GAP = 6
+local dirty: { [Player]: boolean } = {}
+local saving: { [Player]: boolean } = {}
+local lastSave: { [Player]: number } = {}
+local session: { [Player]: string } = {}
+local sessionStart: { [Player]: number } = {}
+
+local function markDirty(player: Player)
+	dirty[player] = true
+end
+
 local function save(player: Player)
 	local p = profiles[player]
-	if not p or not loaded[player] or not okStore then
+	if not p or not loaded[player] or not okStore or saving[player] then
 		return
 	end
+	saving[player], dirty[player], lastSave[player] = true, nil, os.clock()
+	local snap: any = table.clone(p)
+	snap.owned, snap.equipped = table.clone(p.owned), table.clone(p.equipped)
+	snap.session, snap.savedAt = session[player], os.time()
+	local started = sessionStart[player]
 	local ok, err = pcall(function()
-		(store :: DataStore):SetAsync(key(player), p)
+		(store :: DataStore):UpdateAsync(key(player), function(old: any)
+			if
+				typeof(old) == "table"
+				and old.session ~= snap.session
+				and typeof(old.savedAt) == "number"
+				and old.savedAt > started
+			then
+				warn(`[Economy] skipped saving {player.UserId}: another server saved a newer session`)
+				return nil
+			end
+			return snap
+		end)
 	end)
-	if not ok and not warnedNoSave then
-		warnedNoSave = true
-		warn(`[Economy] saving is unavailable ({err}); progress lasts for this session only`)
+	saving[player] = nil
+	if not ok then
+		dirty[player] = true -- retried by the save loop
+		if not warnedNoSave then
+			warnedNoSave = true
+			warn(`[Economy] saving is unavailable ({err}); progress lasts for this session only`)
+		end
 	end
+end
+
+-- Waits out any write in flight, then saves now (leaving and shutdown).
+local function flush(player: Player)
+	while saving[player] do
+		task.wait()
+	end
+	save(player)
 end
 
 local function field(data: any, name: string, kind: string): any
 	return if typeof(data) == "table" and typeof(data[name]) == kind then data[name] else nil
 end
 
+local function count(data: any, name: string, default: number): number
+	local n = field(data, name, "number")
+	return if n and n == n then math.clamp(math.floor(n), 0, 1e9) else default
+end
+
+local function isSkin(id: any): boolean
+	return id == "Standard" or (typeof(id) == "string" and CATALOG[id] ~= nil and CATALOG[id].kind == "Skin")
+end
+
+local function known(id: any, list: { any }): string?
+	for _, entry in list do
+		if id == (if typeof(entry) == "table" then entry.id else entry) then
+			return id
+		end
+	end
+	return nil
+end
+
 local function load(player: Player)
 	local data: any = nil
+	local readOk = false
 	if okStore then
 		local ok, result = pcall(function()
 			return (store :: DataStore):GetAsync(key(player))
 		end)
 		if ok then
-			data = result
-			loaded[player] = true
+			data, readOk = result, true
 		elseif not warnedNoSave then
 			warnedNoSave = true
 			warn(`[Economy] loading is unavailable ({result}); progress lasts for this session only`)
 		end
 	end
+	local owned, equipped = {}, {}
+	for id, v in field(data, "owned", "table") or {} do
+		if typeof(id) == "string" and CATALOG[id] and v == true then
+			owned[id] = true
+		end
+	end
+	for weapon, skin in field(data, "equipped", "table") or {} do
+		if typeof(weapon) == "string" and Config.Weapons[weapon] and isSkin(skin) then
+			equipped[weapon] = skin
+		end
+	end
 	local p: Profile = {
-		coins = field(data, "coins", "number") or 0,
-		owned = field(data, "owned", "table") or {},
-		equipped = field(data, "equipped", "table") or {},
+		coins = count(data, "coins", 0),
+		owned = owned,
+		equipped = equipped,
 		beginnersLuck = field(data, "beginnersLuck", "boolean") == true,
-		hudTheme = field(data, "hudTheme", "string"),
-		xp = field(data, "xp", "number") or 0,
-		rp = field(data, "rp", "number") or Config.RankedStart,
+		hudTheme = known(field(data, "hudTheme", "string"), Config.HudThemes),
+		xp = count(data, "xp", 0),
+		rp = count(data, "rp", Config.RankedStart),
 		ranked = field(data, "ranked", "boolean") == true,
-		finisher = field(data, "finisher", "string") or Config.Finishers[1].id,
-		starter = field(data, "starter", "string"),
+		finisher = known(field(data, "finisher", "string"), Config.Finishers) or Config.Finishers[1].id,
+		starter = known(field(data, "starter", "string"), Config.Starter.Weapons),
+		starterSkin = known(field(data, "starterSkin", "string"), Config.Starter.Colors),
 	}
 	p.owned.Standard = true
 	if player.Parent == nil then
 		return
 	end
-	profiles[player] = p
+	profiles[player], loaded[player] = p, readOk
+	session[player], sessionStart[player] = game.JobId .. tostring(os.time()), os.time()
 	if p.starter then
 		Loadout.choose(player, "Primary", p.starter)
 	end
 	if not p.beginnersLuck then
 		p.beginnersLuck = true
 		p.coins += Config.Payouts.BeginnersLuck
+		publish(player, p)
 		Net.Toast:FireClient(player, "beginnersluck", `+{Config.Payouts.BeginnersLuck} coins to get you started!`)
-		save(player)
+		markDirty(player)
 	end
-	publish(player, p)
 end
 
 function Economy.award(player: Player, amount: number, reason: string)
@@ -188,7 +261,7 @@ function Economy.award(player: Player, amount: number, reason: string)
 	p.coins += amount
 	publish(player, p)
 	Net.Toast:FireClient(player, `+{amount} coins`, reason)
-	task.spawn(save, player) -- DataStore writes yield; the match loop that pays out must not wait
+	markDirty(player)
 end
 
 -- XP for a finished match; announces level-ups and anything they unlock.
@@ -211,7 +284,7 @@ function Economy.awardXp(player: Player, amount: number)
 		local sub = if #unlocked > 0 then `Unlocked: {table.concat(unlocked, ", ")}` else `+{amount} XP`
 		Net.Toast:FireClient(player, `LEVEL {after}!`, sub)
 	end
-	task.spawn(save, player)
+	markDirty(player)
 end
 
 -- Ranked: a win moves RankedSwing points from the loser to the winner. Only counts for players
@@ -223,7 +296,7 @@ function Economy.ranked(player: Player, won: boolean)
 	end
 	p.rp = math.max(0, p.rp + (if won then Config.RankedSwing else -Config.RankedSwing))
 	publish(player, p)
-	task.spawn(save, player)
+	markDirty(player)
 end
 
 -- The winner's finisher ink color for the round-win cutscene.
@@ -238,7 +311,7 @@ function Economy.finisherInk(player: Player?): Color3?
 end
 
 -- Leaderboard text: the richest players and, when anyone plays ranked, the top rank points.
-function Economy.leaderboard(count: number): string
+function Economy.leaderboard(rowsShown: number): string
 	local rows = {}
 	for player, p in profiles do
 		table.insert(rows, { name = player.DisplayName, coins = p.coins, rp = p.rp, ranked = p.ranked })
@@ -247,7 +320,7 @@ function Economy.leaderboard(count: number): string
 		return a.coins > b.coins
 	end)
 	local lines = { "TOP SOLDIERS" }
-	for i = 1, math.min(count, #rows) do
+	for i = 1, math.min(rowsShown, #rows) do
 		table.insert(lines, `{i}. {rows[i].name}   {rows[i].coins} coins`)
 	end
 	table.sort(rows, function(a, b)
@@ -268,12 +341,15 @@ end
 
 local function settings(player: Player, p: Profile, setting: any, a: any, b: any)
 	if setting == "Theme" then
-		for _, t in Config.HudThemes do
-			if t.id == a then
-				p.hudTheme = t.id
-			end
+		local theme = known(a, Config.HudThemes)
+		if not theme or theme == p.hudTheme then
+			return
 		end
+		p.hudTheme = theme
 	elseif setting == "Ranked" and typeof(a) == "boolean" then
+		if a == p.ranked or player:GetAttribute("Arena") ~= nil or player:GetAttribute("Queued") then
+			return
+		end
 		p.ranked = a
 	elseif
 		setting == "Starter"
@@ -282,15 +358,14 @@ local function settings(player: Player, p: Profile, setting: any, a: any, b: any
 		and table.find(Config.Starter.Colors, b)
 	then
 		-- A free starter weapon color, equipped on the starter weapon, which becomes the default primary.
-		p.starter = a
-		p.owned[b] = true
+		p.starter, p.starterSkin = a, b
 		p.equipped[a] = b
 		Loadout.choose(player, "Primary", a)
 	else
 		return
 	end
 	publish(player, p)
-	task.spawn(save, player)
+	markDirty(player)
 end
 
 function Economy.bind()
@@ -322,23 +397,29 @@ function Economy.bind()
 				elseif item.kind == "Finisher" then "Equip it in the shop's FINISHERS tab."
 				else "Equip it in your Inventory."
 			Net.Toast:FireClient(player, "Unlocked!", `{item.name}. {how}`)
-			save(player)
-		elseif action == "EquipFinisher" and typeof(a) == "string" and owns(player, p, "Finisher_" .. a) then
+			markDirty(player)
+		elseif
+			action == "EquipFinisher"
+			and typeof(a) == "string"
+			and a ~= p.finisher
+			and owns(player, p, "Finisher_" .. a)
+		then
 			p.finisher = a
 			publish(player, p)
-			task.spawn(save, player)
+			markDirty(player)
 		elseif
 			action == "Equip"
 			and typeof(a) == "string"
 			and Config.Weapons[a]
 			and typeof(b) == "string"
-			and owns(player, p, b)
 			and CATALOG[b]
 			and CATALOG[b].kind == "Skin"
+			and (owns(player, p, b) or (b == p.starterSkin and a == p.starter))
+			and p.equipped[a] ~= b
 		then
 			p.equipped[a] = b
 			publish(player, p)
-			save(player)
+			markDirty(player)
 		end
 	end)
 	Players.PlayerAdded:Connect(load)
@@ -346,13 +427,31 @@ function Economy.bind()
 		task.spawn(load, player)
 	end
 	Players.PlayerRemoving:Connect(function(player)
-		save(player)
-		profiles[player] = nil
-		loaded[player] = nil
+		flush(player)
+		profiles[player], loaded[player], dirty[player], lastSave[player] = nil, nil, nil, nil
+		session[player], sessionStart[player] = nil, nil
+	end)
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			for player in dirty do
+				if os.clock() - (lastSave[player] or 0) >= SAVE_GAP then
+					task.spawn(save, player)
+				end
+			end
+		end
 	end)
 	game:BindToClose(function()
+		local left = 0
 		for _, player in Players:GetPlayers() do
-			save(player)
+			left += 1
+			task.spawn(function()
+				flush(player)
+				left -= 1
+			end)
+		end
+		while left > 0 do
+			task.wait()
 		end
 	end)
 end

@@ -60,12 +60,19 @@ function PracticeRange.new(info: RangeInfo, lobbyMin: Vector3, lobbyMax: Vector3
 			end
 		end
 		c.humanoid.WalkSpeed = DEFAULT_WALK
+		c.model:SetAttribute("Team", nil)
 		player:SetAttribute("Team", nil)
 		player:SetAttribute("Arena", nil)
 		player.CameraMode = Enum.CameraMode.Classic
 	end
 
+	local lastTry: { [Player]: number } = {}
 	local function practice(player: Player, weapon: string)
+		local now = os.clock()
+		if now - (lastTry[player] or 0) < 0.5 then
+			return
+		end
+		lastTry[player] = now
 		local current = player:GetAttribute("Arena")
 		local character = player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -77,18 +84,29 @@ function PracticeRange.new(info: RangeInfo, lobbyMin: Vector3, lobbyMax: Vector3
 			return
 		end
 		local c = Combatants.byPlayer(player)
+		if c and c.arena ~= hooks then
+			return
+		end
 		if not c then
-			c = Combatants.new(
-				hooks,
-				player.DisplayName,
-				player,
-				"Navy",
-				character :: Model,
-				(character :: Model):GetPivot()
-			)
+			local pivot = (character :: Model):GetPivot()
+			local ok, made = pcall(function()
+				return Combatants.new(hooks, player.DisplayName, player, "Navy", character :: Model, pivot)
+			end)
+			if not ok then
+				return
+			end
+			c = made
 			player:SetAttribute("Team", "Navy")
 			player:SetAttribute("Arena", ID)
 			player.CameraMode = Enum.CameraMode.LockFirstPerson
+			-- Dying on the range ends practice; the lobby's own death handler then respawns them.
+			humanoid.Died:Once(function()
+				if Combatants.byPlayer(player) == made then
+					leave(player)
+				end
+			end)
+		elseif Combatants.weapon(c) == weapon then
+			return -- already holding it
 		end
 		local melee = Config.Weapons[weapon].kind == "melee"
 		Combat.arm(
@@ -129,18 +147,30 @@ function PracticeRange.new(info: RangeInfo, lobbyMin: Vector3, lobbyMax: Vector3
 
 	-- Target dummies stand at the end of each lane and come back 2 seconds after they drop.
 	local function dummy(cf: CFrame)
-		local model = Rig.spawnBot("Grey", "Target", cf, folder)
-		local c = Combatants.new(hooks, "Target", nil, "Grey", model, cf)
-		c.root.Anchored = true
-		c.humanoid.Died:Once(function()
-			task.wait(2)
-			Combatants.remove(c)
-			model:Destroy()
-			dummy(cf)
+		local ok, err = pcall(function()
+			local model = Rig.spawnBot("Grey", "Target", cf, folder)
+			local made, c = pcall(function()
+				return Combatants.new(hooks, "Target", nil, "Grey", model, cf)
+			end)
+			if not made then
+				model:Destroy()
+				error(c)
+			end
+			c.root.Anchored = true
+			c.humanoid.Died:Once(function()
+				task.wait(2)
+				Combatants.remove(c)
+				model:Destroy()
+				dummy(cf)
+			end)
 		end)
+		if not ok then
+			warn("Practice dummy failed, retrying:", err)
+			task.delay(5, dummy, cf)
+		end
 	end
 	for _, cf in info.targets do
-		dummy(cf)
+		task.spawn(dummy, cf)
 	end
 
 	Net.Practice.OnServerEvent:Connect(function(player, action)
@@ -148,7 +178,10 @@ function PracticeRange.new(info: RangeInfo, lobbyMin: Vector3, lobbyMax: Vector3
 			leave(player)
 		end
 	end)
-	Players.PlayerRemoving:Connect(leave)
+	Players.PlayerRemoving:Connect(function(player)
+		lastTry[player] = nil
+		leave(player)
+	end)
 	task.spawn(function()
 		while true do
 			task.wait(0.25)

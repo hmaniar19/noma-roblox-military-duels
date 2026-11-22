@@ -50,8 +50,10 @@ pulse:Play()
 if not game:IsLoaded() then
 	game.Loaded:Wait()
 end
-if not player.Character then
-	player.CharacterAdded:Wait()
+-- Fade after 30 s even if the character never arrives, so the screen can't hang forever.
+local deadline = os.clock() + 30
+while not player.Character and os.clock() < deadline do
+	task.wait(0.25)
 end
 task.wait(1)
 pulse:Cancel()

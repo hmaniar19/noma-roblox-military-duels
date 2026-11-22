@@ -123,7 +123,7 @@ function Rig.spawnPlayer(player: Player, team: Config.TeamId, cf: CFrame): Model
 	pcall(player.RequestStreamAroundAsync, player, cf.Position)
 	player:LoadCharacterWithHumanoidDescriptionAsync(desc)
 	local model = player.Character
-	if not model or not player:IsDescendantOf(Players) then
+	if not model or not model:FindFirstChild("HumanoidRootPart") or not player:IsDescendantOf(Players) then
 		return nil
 	end
 	model:PivotTo(cf)
@@ -167,6 +167,9 @@ local ANIMATIONS: { [string]: string } = {
 	run = "rbxassetid://913376220",
 }
 
+-- Loaded tracks per animator, so replays never pile up LoadAnimation tracks (the limit is 256).
+local tracks: { [Animator]: { [string]: AnimationTrack } } = setmetatable({}, { __mode = "k" }) :: any
+
 function Rig.animate(model: Model, name: string, looped: boolean): AnimationTrack?
 	local humanoid = model:FindFirstChildOfClass("Humanoid")
 	if not humanoid then
@@ -179,12 +182,24 @@ function Rig.animate(model: Model, name: string, looped: boolean): AnimationTrac
 		animator = created
 	end
 	assert(animator, "animator")
-	local anim = Instance.new("Animation")
-	anim.AnimationId = ANIMATIONS[name]
-	local ok, track = pcall(animator.LoadAnimation, animator, anim)
-	if not ok or not track then
+	local id = ANIMATIONS[name]
+	if not id then
 		return nil
 	end
+	local cache = tracks[animator] or {}
+	tracks[animator] = cache
+	local track = cache[id]
+	if not track then
+		local anim = Instance.new("Animation")
+		anim.AnimationId = id
+		local ok, loaded = pcall(animator.LoadAnimation, animator, anim)
+		if not ok or not loaded then
+			return nil
+		end
+		track = loaded
+		cache[id] = loaded
+	end
+	assert(track, "track")
 	track.Priority = Enum.AnimationPriority.Action
 	track.Looped = looped
 	track:Play(0.2)

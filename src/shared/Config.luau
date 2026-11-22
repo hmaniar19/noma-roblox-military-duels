@@ -44,6 +44,7 @@ end
 local Config = {
 	RoundsToWin = 5,
 	SuddenDeathAt = 4,
+	MaxRounds = 15, -- a match that reaches this many rounds (draws included) ends on the score
 	RoundSeconds = 120,
 	FreezeSeconds = 10, -- the drop-in ride; the loadout is picked during it
 	QueueSeconds = 10, -- after the first player queues for a map, others have this long to join
