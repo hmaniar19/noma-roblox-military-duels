@@ -4,6 +4,7 @@
 -- Config.Xp) and only the server changes them. Profiles are saved with DataStoreService; when saving
 -- isn't available (Studio without API access) the game keeps working and profiles last for the session.
 local DataStoreService = game:GetService("DataStoreService")
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -121,19 +122,20 @@ local function publish(player: Player, p: Profile)
 end
 
 -- One write in flight per player; markDirty queues a save that the loop in bind sends at most every
--- SAVE_GAP seconds. `session` and `sessionStart` stop a stale server overwriting a newer session's save.
-local SAVE_GAP = 6
+-- SAVE_GAP seconds. Session locking: the saved record names the server that owns it ("lock"); a save
+-- only writes while this server still owns the lock, so an old server can never overwrite a newer
+-- session after a quick rejoin. Saves refresh the lock; the final save releases it.
+local SAVE_GAP, LOCK_TTL = 6, 90
+local JOB = if game.JobId ~= "" then game.JobId else HttpService:GenerateGUID(false)
 local dirty: { [Player]: boolean } = {}
 local saving: { [Player]: boolean } = {}
 local lastSave: { [Player]: number } = {}
-local session: { [Player]: string } = {}
-local sessionStart: { [Player]: number } = {}
 
 local function markDirty(player: Player)
 	dirty[player] = true
 end
 
-local function save(player: Player)
+local function save(player: Player, release: boolean?)
 	local p = profiles[player]
 	if not p or not loaded[player] or not okStore or saving[player] then
 		return
@@ -141,17 +143,12 @@ local function save(player: Player)
 	saving[player], dirty[player], lastSave[player] = true, nil, os.clock()
 	local snap: any = table.clone(p)
 	snap.owned, snap.equipped = table.clone(p.owned), table.clone(p.equipped)
-	snap.session, snap.savedAt = session[player], os.time()
-	local started = sessionStart[player]
+	snap.lock = if release then nil else { job = JOB, at = os.time() }
 	local ok, err = pcall(function()
 		(store :: DataStore):UpdateAsync(key(player), function(old: any)
-			if
-				typeof(old) == "table"
-				and old.session ~= snap.session
-				and typeof(old.savedAt) == "number"
-				and old.savedAt > started
-			then
-				warn(`[Economy] skipped saving {player.UserId}: another server saved a newer session`)
+			local lock = if typeof(old) == "table" and typeof(old.lock) == "table" then old.lock else nil
+			if lock and lock.job ~= JOB then
+				warn(`[Economy] not saving {player.UserId}: another server now owns this profile`)
 				return nil
 			end
 			return snap
@@ -167,12 +164,40 @@ local function save(player: Player)
 	end
 end
 
--- Waits out any write in flight, then saves now (leaving and shutdown).
-local function flush(player: Player)
+-- Waits out any write in flight, then saves now (leaving and shutdown); `release` frees the lock.
+local function flush(player: Player, release: boolean?)
 	while saving[player] do
 		task.wait()
 	end
-	save(player)
+	save(player, release)
+end
+
+-- Claims the profile for this server: waits up to ~12 s for another server's live lock (its final
+-- save on leave), then takes over a lock that is stale or never released. Returns ok and the data.
+local function claim(player: Player): (boolean, any)
+	for attempt = 1, 7 do
+		local claimed, data = false, nil
+		local ok, err = pcall(function()
+			(store :: DataStore):UpdateAsync(key(player), function(old: any)
+				local lock = if typeof(old) == "table" and typeof(old.lock) == "table" then old.lock else nil
+				local live = lock and lock.job ~= JOB and typeof(lock.at) == "number" and os.time() - lock.at < LOCK_TTL
+				if live and attempt < 7 then
+					return nil
+				end
+				local record = if typeof(old) == "table" then old else {}
+				record.lock = { job = JOB, at = os.time() }
+				claimed, data = true, old
+				return record
+			end)
+		end)
+		if not ok then
+			return false, err
+		elseif claimed then
+			return true, data
+		end
+		task.wait(2)
+	end
+	return false, "profile is busy"
 end
 
 local function field(data: any, name: string, kind: string): any
@@ -201,14 +226,11 @@ local function load(player: Player)
 	local data: any = nil
 	local readOk = false
 	if okStore then
-		local ok, result = pcall(function()
-			return (store :: DataStore):GetAsync(key(player))
-		end)
+		local ok, result = claim(player)
 		if ok then
 			data, readOk = result, true
-		elseif not warnedNoSave then
-			warnedNoSave = true
-			warn(`[Economy] loading is unavailable ({result}); progress lasts for this session only`)
+		else
+			warn(`[Economy] could not load {player.UserId} ({result}); progress lasts for this session only`)
 		end
 	end
 	local owned, equipped = {}, {}
@@ -240,7 +262,9 @@ local function load(player: Player)
 		return
 	end
 	profiles[player], loaded[player] = p, readOk
-	session[player], sessionStart[player] = game.JobId .. tostring(os.time()), os.time()
+	if okStore and not readOk then
+		Net.Toast:FireClient(player, "Progress not saving", "Your coins and XP will last for this visit only.")
+	end
 	if p.starter then
 		Loadout.choose(player, "Primary", p.starter)
 	end
@@ -427,13 +451,19 @@ function Economy.bind()
 		task.spawn(load, player)
 	end
 	Players.PlayerRemoving:Connect(function(player)
-		flush(player)
+		flush(player, true)
 		profiles[player], loaded[player], dirty[player], lastSave[player] = nil, nil, nil, nil
-		session[player], sessionStart[player] = nil, nil
 	end)
 	task.spawn(function()
+		local refreshed = os.clock()
 		while true do
 			task.wait(1)
+			if os.clock() - refreshed > 30 then
+				refreshed = os.clock() -- keep this server's locks fresh for players who aren't earning
+				for player in loaded do
+					dirty[player] = true
+				end
+			end
 			for player in dirty do
 				if os.clock() - (lastSave[player] or 0) >= SAVE_GAP then
 					task.spawn(save, player)
@@ -446,7 +476,7 @@ function Economy.bind()
 		for _, player in Players:GetPlayers() do
 			left += 1
 			task.spawn(function()
-				flush(player)
+				flush(player, true)
 				left -= 1
 			end)
 		end
