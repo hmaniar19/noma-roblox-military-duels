@@ -10,6 +10,7 @@ local Combatants = require(script.Parent.Combatants)
 local Config = require(ReplicatedStorage.Shared.Config)
 local Gun = require(ReplicatedStorage.Shared.Gun)
 local Hitbox = require(ReplicatedStorage.Shared.Hitbox)
+local Profile = require(ReplicatedStorage.Shared.Profile)
 local Net = require(script.Parent.Net)
 
 type Combatant = Combatants.Combatant
@@ -162,8 +163,8 @@ function Combat.equip(c: Combatant, index: number)
 	tool.ManualActivationOnly = true
 	tool.Grip = Gun.Grip
 	-- The owner's equipped skin (published by Economy); bots carry standard guns.
-	local skin = if c.player then c.player:GetAttribute("Skin_" .. id) else nil
-	local handle = Gun.build(tool, id, if typeof(skin) == "string" then skin else nil)
+	local skin = if c.player then Profile.skin(c.player, id) else nil
+	local handle = Gun.build(tool, id, skin)
 	tool.Parent = c.model
 	c.humanoid:EquipTool(tool)
 	local draw = handle:FindFirstChild("Draw")

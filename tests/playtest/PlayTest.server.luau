@@ -10,6 +10,7 @@ local Server = ServerScriptService:WaitForChild("Server")
 local Combat = require(Server:WaitForChild("Combat"))
 local Combatants = require(Server:WaitForChild("Combatants"))
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local Profile = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Profile"))
 
 local function result(name: string, ok: boolean, why: any?)
 	print(if ok then `PLAYTEST PASS {name}` else `PLAYTEST FAIL {name}: {tostring(why)}`)
@@ -27,6 +28,12 @@ local function waitFor(seconds: number, check: () -> boolean): boolean
 end
 
 local player = Players.PlayerAdded:Wait()
+-- Trace the attributes that steer the flow, so a failure can be read from the log.
+for _, key in { "Arena", "Queued", "Team", "Weapon", "PickPrimary", "Celebrating" } do
+	player:GetAttributeChangedSignal(key):Connect(function()
+		print(`PLAYTEST TRACE {string.format("%.1f", os.clock())} {key}={tostring(player:GetAttribute(key))}`)
+	end)
+end
 local arenas = ReplicatedStorage:WaitForChild("Arenas")
 
 local steps = 0
@@ -79,6 +86,25 @@ result(
 	end),
 	player:GetAttribute("HudTheme")
 )
+result("starter: first join asks for a starter pick", player:GetAttribute("StarterPicked") == false)
+step("PickStarter")
+result(
+	"starter: SMG in Forest Camo is the default primary",
+	waitFor(5, function()
+		return player:GetAttribute("StarterPicked") == true
+			and player:GetAttribute("PickPrimary") == "SMG"
+			and Profile.skin(player, "SMG") == "ForestCamo"
+	end),
+	`{player:GetAttribute("PickPrimary")} {Profile.skin(player, "SMG")}`
+)
+step("EquipFinisher")
+result(
+	"finisher: equip a finisher style",
+	waitFor(5, function()
+		return player:GetAttribute("Finisher") == "Thunder"
+	end),
+	player:GetAttribute("Finisher")
+)
 
 -- Practice range: stand at the first rack and take a weapon; then walk off the range.
 local rangeFolder = workspace:WaitForChild("PracticeRange", 10)
@@ -102,6 +128,11 @@ if rack and root() then
 		targets += if c.player then 0 else 1
 	end
 	result("range: target dummies standing", targets >= 3, targets)
+	local target = rangeFolder:FindFirstChild("Target")
+	local r = root()
+	if target and r then
+		r.CFrame = CFrame.lookAt(r.Position, Vector3.new(target:GetPivot().X, r.Position.Y, target:GetPivot().Z))
+	end
 	step("ShootTarget")
 	task.wait(6)
 	local r = root()
@@ -184,6 +215,7 @@ task.wait(1)
 waitFor(20, function()
 	return range:GetAttribute("Phase") == "Live"
 end)
+task.wait(Config.SpawnShieldSeconds + 0.5) -- spawn shields block damage for the first seconds
 local me = Combatants.byPlayer(player)
 bot = botOf("ShootingRange")
 if bot and me then
@@ -205,6 +237,7 @@ Config.RoundsToWin = 2
 waitFor(20, function()
 	return range:GetAttribute("Phase") == "Live"
 end)
+task.wait(Config.SpawnShieldSeconds + 0.5)
 me = Combatants.byPlayer(player)
 bot = botOf("ShootingRange")
 if bot and me then
@@ -224,6 +257,7 @@ result(
 	end)
 )
 result("after match: back in the lobby", waitFor(Config.MatchEndSeconds + 15, inLobby))
+result("progression: XP earned for the match", (player:GetAttribute("XP") or 0) > 0, player:GetAttribute("XP"))
 result(
 	"after match: arena ready again",
 	waitFor(5, function()

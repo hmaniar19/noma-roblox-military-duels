@@ -59,13 +59,13 @@ local function tween(s: Session, inst: Instance, props: Props, time: number, d: 
 	t:Play()
 end
 
-local function inkFrame(position: UDim2, rotation: number): Frame
+local function inkFrame(position: UDim2, rotation: number, color: Color3): Frame
 	local frame = make("Frame", {
 		AnchorPoint = CENTER,
 		Position = position,
 		Size = UDim2.fromOffset(0, 0),
 		Rotation = rotation,
-		BackgroundColor3 = INK_RED,
+		BackgroundColor3 = color,
 		BorderSizePixel = 0,
 		ZIndex = 2,
 	}, gui)
@@ -162,6 +162,7 @@ builders.Finisher = function(s, data, length)
 	local side = flatSide(defeatedPos - winnerPos)
 	local base = focus + side * 10 + Vector3.new(0, -1.3, 0)
 	local target = focus + Vector3.new(0, 1.2, 0)
+	local ink: Color3 = if typeof(data.ink) == "Color3" then data.ink else INK_RED
 
 	for i = 1, 36 do
 		local angle = (i / 36) * math.pi * 2 + rng:NextNumber(-0.08, 0.08)
@@ -183,7 +184,7 @@ builders.Finisher = function(s, data, length)
 
 	local slashes: { { number } } = { { 0.36, 0.3, -32, 20 }, { 0.62, 0.42, -22, 14 }, { 0.5, 0.22, 26, 10 } }
 	for i, sd in slashes do
-		local slash = inkFrame(UDim2.fromScale(sd[1], sd[2]), sd[3])
+		local slash = inkFrame(UDim2.fromScale(sd[1], sd[2]), sd[3], ink)
 		slash.Size = UDim2.fromOffset(0, sd[4])
 		tween(s, slash, { Size = UDim2.new(1.1, 0, 0, sd[4]) }, 0.14, 0.1 + i * 0.18)
 		tween(s, slash, { BackgroundTransparency = 1 }, 0.6, length - 1.1)
@@ -191,7 +192,7 @@ builders.Finisher = function(s, data, length)
 
 	for _ = 1, 8 do
 		local size = rng:NextInteger(18, 80)
-		local dot = inkFrame(UDim2.fromScale(rng:NextNumber(0.2, 0.8), rng:NextNumber(0.12, 0.55)), 0)
+		local dot = inkFrame(UDim2.fromScale(rng:NextNumber(0.2, 0.8), rng:NextNumber(0.12, 0.55)), 0, ink)
 		local delay = 0.3 + rng:NextNumber(0, 0.6)
 		tween(s, dot, { Size = UDim2.fromOffset(size, size) }, 0.18, delay, Enum.EasingStyle.Back)
 		tween(s, dot, { BackgroundTransparency = 1 }, 0.7, delay + 1.1)

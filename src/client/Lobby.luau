@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Profile = require(ReplicatedStorage.Shared.Profile)
 local Theme = require(script.Parent.Theme)
 
 local player = Players.LocalPlayer :: Player
@@ -17,6 +18,7 @@ local ShopRemote = remotes:WaitForChild("Shop") :: RemoteEvent
 local Toast = remotes:WaitForChild("Toast") :: RemoteEvent
 local SettingsRemote = remotes:WaitForChild("Settings") :: RemoteEvent
 local PracticeRemote = remotes:WaitForChild("Practice") :: RemoteEvent
+local EmoteRemote = remotes:WaitForChild("Emote") :: RemoteEvent
 
 local FONT, BODY = Enum.Font.GothamBlack, Enum.Font.GothamMedium
 -- PANEL and PICKED follow the player's HUD theme (set in Theme.watch at the bottom).
@@ -117,6 +119,13 @@ for i, mode in { "1v1", "2v2" } do
 		end
 	)
 end
+-- Ranked: unlocked at level 50; queues against ranked players and moves Rank Points.
+local rankedButton = button(bar, UDim2.fromOffset(216, 46), UDim2.fromOffset(modeX, 92), "", function()
+	if player:GetAttribute("RankedUnlocked") == true then
+		SettingsRemote:FireServer("Ranked", not player:GetAttribute("Ranked"))
+	end
+end)
+rankedButton.TextSize = 15
 
 local play = button(bar, UDim2.fromOffset(190, 126), UDim2.new(1, -332, 0, 12), "PLAY", function()
 	if player:GetAttribute("Queued") then
@@ -143,6 +152,20 @@ coins.TextXAlignment = Enum.TextXAlignment.Right
 coins.TextColor3 = PICKED
 coins.TextStrokeTransparency = 0.4
 
+local levelBox = Instance.new("Frame")
+levelBox.Size, levelBox.Position = UDim2.fromOffset(260, 70), UDim2.new(1, -280, 0, 146)
+levelBox.BackgroundTransparency = 1
+levelBox.Parent = gui
+local levelText = label(levelBox, UDim2.new(1, 0, 0, 24), UDim2.new(), 18)
+levelText.TextXAlignment = Enum.TextXAlignment.Right
+levelText.TextStrokeTransparency = 0.4
+local xpBar = frame(levelBox, UDim2.fromOffset(200, 8), UDim2.new(1, 0, 0, 28), Vector2.new(1, 0), IDLE)
+local xpFill = frame(xpBar, UDim2.fromScale(0, 1), UDim2.new(), nil, PICKED)
+local titleText = label(levelBox, UDim2.new(1, 0, 0, 24), UDim2.fromOffset(0, 40), 18)
+titleText.TextXAlignment = Enum.TextXAlignment.Right
+titleText.TextColor3 = Color3.fromRGB(255, 200, 60)
+titleText.TextStrokeTransparency = 0.4
+
 -- Shop and inventory ------------------------------------------------------------------------------
 local function ownedSet(): { [string]: boolean }
 	local set = { Standard = true }
@@ -154,8 +177,13 @@ local function ownedSet(): { [string]: boolean }
 		table.insert(ids, w.id)
 	end
 	for _, id in ids do
-		if player:GetAttribute("Owns_" .. id) == true then
+		if Profile.owns(player, id) then
 			set[id] = true
+		end
+	end
+	for _, f in Config.Finishers do
+		if f.price == 0 or Profile.owns(player, "Finisher_" .. f.id) then
+			set["Finisher_" .. f.id] = true
 		end
 	end
 	return set
@@ -174,6 +202,7 @@ end
 -- One shop card: swatch, name, optional description, price and a BUY button.
 local shopCards: { [string]: TextButton } = {}
 local prices: { [string]: number } = {}
+local finisherOf: { [string]: string } = {} -- shop card id -> finisher id
 local function shopCard(parent: Instance, item: { [string]: any }, size: Vector2, pos: Vector2)
 	local card = frame(parent, UDim2.fromOffset(size.X, size.Y), UDim2.fromOffset(pos.X, pos.Y))
 	card.BackgroundColor3 = IDLE
@@ -185,10 +214,17 @@ local function shopCard(parent: Instance, item: { [string]: any }, size: Vector2
 		label(card, UDim2.new(1, -20, 0, 92), UDim2.fromOffset(10, y), 15, BODY).Text = item.about
 		y += 100
 	end
-	label(card, UDim2.new(1, -12, 0, 20), UDim2.fromOffset(6, y), 15, BODY).Text = `{item.price} coins`
+	label(card, UDim2.new(1, -12, 0, 20), UDim2.fromOffset(6, y), 15, BODY).Text = if item.price > 0
+		then `{item.price} coins`
+		else "FREE"
 	prices[item.id] = item.price
 	shopCards[item.id] = button(card, UDim2.new(1, -20, 0, 34), UDim2.fromOffset(10, size.Y - 44), "BUY", function()
-		ShopRemote:FireServer("Buy", item.id)
+		local finisher = finisherOf[item.id]
+		if finisher and ownedSet()[item.id] then
+			ShopRemote:FireServer("EquipFinisher", finisher)
+		else
+			ShopRemote:FireServer("Buy", item.id)
+		end
 	end)
 end
 
@@ -204,7 +240,7 @@ local function showTab(name: string)
 		tabButtons[id].TextColor3 = if id == name then Color3.fromRGB(20, 20, 20) else Color3.new(1, 1, 1)
 	end
 end
-for i, name in { "SKINS", "WEAPONS" } do
+for i, name in { "SKINS", "WEAPONS", "FINISHERS" } :: { string } do
 	local tab = Instance.new("Frame")
 	tab.Size, tab.Position = UDim2.new(1, 0, 1, -100), UDim2.fromOffset(0, 100)
 	tab.BackgroundTransparency = 1
@@ -228,6 +264,12 @@ for _, skin in Config.Skins do
 		shopCard(tabs.SKINS, skin, Vector2.new(190, 170), Vector2.new(16 + x * 204, y * 182))
 		skinCount += 1
 	end
+end
+for i, f in Config.Finishers do
+	local id = "Finisher_" .. f.id
+	finisherOf[id] = f.id
+	local item = { id = id, name = f.name, price = f.price, color = f.ink }
+	shopCard(tabs.FINISHERS, item, Vector2.new(190, 170), Vector2.new(16 + (i - 1) % 4 * 204, (i - 1) // 4 * 182))
 end
 for i, w in Config.ShopWeapons do
 	local base = Config.Weapons[w.base].name
@@ -290,6 +332,29 @@ local settingsButton = button(gui, UDim2.fromOffset(130, 34), UDim2.new(1, -150,
 	shopPanel.Visible, inventoryPanel.Visible = false, false
 end)
 settingsButton.TextSize = 14
+local emotePanel = modal("EMOTES")
+emotePanel.Size = UDim2.fromOffset(340, 64 + #Config.Emotes * 52)
+local emoteButtons: { [string]: TextButton } = {}
+for i, e in Config.Emotes do
+	local pos = UDim2.fromOffset(16, 56 + (i - 1) * 52)
+	emoteButtons[e.id] = button(emotePanel, UDim2.new(1, -32, 0, 44), pos, e.name, function()
+		if e.title == nil or player:GetAttribute("Title") == e.title then
+			EmoteRemote:FireServer(e.id)
+			emotePanel.Visible = false
+		end
+	end)
+end
+local emotesButton = button(gui, UDim2.fromOffset(130, 34), UDim2.new(1, -290, 0, 104), "EMOTES", function()
+	emotePanel.Visible = not emotePanel.Visible
+	shopPanel.Visible, inventoryPanel.Visible, settingsPanel.Visible = false, false, false
+	for _, e in Config.Emotes do
+		local locked = e.title ~= nil and player:GetAttribute("Title") ~= e.title
+		local b = emoteButtons[e.id]
+		b.Text = if locked then `🔒 {e.name} (Eddie's Honor)` else e.name
+		b.TextColor3 = if locked then Color3.fromRGB(120, 120, 120) else Color3.new(1, 1, 1)
+	end
+end)
+emotesButton.TextSize = 14
 -- On the practice range: a way back to the lobby (walking off the range also works).
 local leaveRange = button(gui, UDim2.fromOffset(220, 48), UDim2.new(0.5, -110, 1, -80), "LEAVE RANGE", function()
 	PracticeRemote:FireServer("Leave")
@@ -303,6 +368,55 @@ local function firstJoin()
 end
 player:GetAttributeChangedSignal("ThemePicked"):Connect(firstJoin)
 firstJoin()
+
+-- First join, after the HUD colors: a starter primary and its color. No X: picking is required.
+local starterPanel = modal("CHOOSE YOUR STARTER")
+starterPanel.Size = UDim2.fromOffset(840, 330)
+local starterClose = starterPanel:FindFirstChildOfClass("TextButton") :: TextButton
+starterClose:Destroy()
+local starterWeapon, starterColor = Config.Starter.Weapons[1], Config.Starter.Colors[1]
+local starterSent = false
+local starterStrokes: { [string]: UIStroke } = {}
+local function starterButton(id: string, text: string, pos: UDim2, size: UDim2, pick: () -> ()): TextButton
+	local b = button(starterPanel, size, pos, text, function()
+		pick()
+		for key, s in starterStrokes do
+			s.Enabled = key == starterWeapon or key == starterColor
+		end
+	end)
+	b.TextStrokeTransparency = 0.4
+	local stroke = Instance.new("UIStroke")
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Thickness = 4
+	stroke.Color = PICKED
+	stroke.Enabled = id == starterWeapon or id == starterColor
+	stroke.Parent = b
+	table.insert(strokes, stroke)
+	starterStrokes[id] = stroke
+	return b
+end
+for i, id in Config.Starter.Weapons do
+	local name = string.upper(Config.Weapons[id].name)
+	starterButton(id, name, UDim2.fromOffset(16 + (i - 1) * 204, 60), UDim2.fromOffset(190, 50), function()
+		starterWeapon = id
+	end)
+end
+for i, id in Config.Starter.Colors do
+	for _, skin in Config.Skins do
+		if skin.id == id then
+			local pos, size = UDim2.fromOffset(16 + (i - 1) * 204, 124), UDim2.fromOffset(190, 110)
+			starterButton(id, string.upper(skin.name), pos, size, function()
+				starterColor = id
+			end).BackgroundColor3 = skin.color
+				or IDLE
+		end
+	end
+end
+local confirm = button(starterPanel, UDim2.fromOffset(220, 50), UDim2.new(0.5, -110, 1, -66), "CONFIRM", function()
+	SettingsRemote:FireServer("Starter", starterWeapon, starterColor)
+	starterSent = true
+end)
+confirm.BackgroundColor3 = GO
 
 -- Toasts --------------------------------------------------------------------------------------------
 local toast = frame(gui, UDim2.fromOffset(520, 70), UDim2.new(0.5, 0, 0, 70), Vector2.new(0.5, 0))
@@ -340,18 +454,39 @@ RunService.RenderStepped:Connect(function()
 	local practicing = arena == "Practice"
 	bar.Visible = inLobby
 	status.Visible = inLobby or practicing
-	settingsButton.Visible = inLobby
+	settingsButton.Visible, emotesButton.Visible, levelBox.Visible = inLobby, inLobby, inLobby
+	starterPanel.Visible = inLobby
+		and not starterSent
+		and player:GetAttribute("StarterPicked") == false
+		and player:GetAttribute("ThemePicked") ~= false
 	leaveRange.Visible = practicing
 	if practicing then
 		status.Text = "PRACTICE RANGE · shoot the targets · walk off the range or press LEAVE RANGE to stop"
 	end
 	if not inLobby then
 		shopPanel.Visible, inventoryPanel.Visible, settingsPanel.Visible = false, false, false
+		emotePanel.Visible = false
 	end
 	toast.Visible = os.clock() < toastUntil
 	coins.Text = `{player:GetAttribute("Coins") or 0} COINS`
 	if not inLobby then
 		return
+	end
+	local into, need = (player:GetAttribute("XpInto") or 0) :: number, (player:GetAttribute("XpNeed") or 1) :: number
+	levelText.Text = `LEVEL {player:GetAttribute("Level") or 1} · {into}/{need} XP`
+	xpFill.Size = UDim2.fromScale(math.clamp(into / math.max(need, 1), 0, 1), 1)
+	xpFill.BackgroundColor3 = PICKED
+	local title = player:GetAttribute("Title") :: string?
+	titleText.Text = if title == "EddiesHonor" then "EDDIE'S HONOR" elseif title then string.upper(title) else ""
+	local rankedOn = player:GetAttribute("Ranked") == true
+	if player:GetAttribute("RankedUnlocked") == true then
+		local rp = player:GetAttribute("RP") or Config.RankedStart
+		rankedButton.Text = `RANKED: {if rankedOn then "ON" else "OFF"} · {rp} RP`
+		rankedButton.BackgroundColor3 = if rankedOn then GO else IDLE
+		rankedButton.TextColor3 = Color3.new(1, 1, 1)
+	else
+		rankedButton.Text, rankedButton.BackgroundColor3 = "RANKED (LV 50)", IDLE
+		rankedButton.TextColor3 = Color3.fromRGB(120, 120, 120)
 	end
 	local now = workspace:GetServerTimeNow()
 	local queued = player:GetAttribute("Queued") :: string?
@@ -391,12 +526,18 @@ RunService.RenderStepped:Connect(function()
 		local wallet = (player:GetAttribute("Coins") or 0) :: number
 		for id, b in shopCards do
 			local price = prices[id]
-			b.Text = if owned[id] then "OWNED" elseif wallet < price then "NEED COINS" else "BUY"
-			b.BackgroundColor3 = if owned[id] or wallet < price then IDLE else GO
+			local finisher = finisherOf[id]
+			local equipped = finisher and finisher == (player:GetAttribute("Finisher") or Config.Finishers[1].id)
+			b.Text = if owned[id] and finisher
+				then (if equipped then "EQUIPPED" else "EQUIP")
+				elseif owned[id] then "OWNED"
+				elseif wallet < price then "NEED COINS"
+				else "BUY"
+			b.BackgroundColor3 = if b.Text == "EQUIP" or not (owned[id] or wallet < price) then GO else IDLE
 		end
 		-- Owned looks only, packed left in catalog order.
 		for weapon, row in swatches do
-			local equipped = player:GetAttribute("Skin_" .. weapon) or "Standard"
+			local equipped = Profile.skin(player, weapon) or "Standard"
 			local column = 0
 			for _, skin in Config.Skins do
 				local b = row[skin.id]

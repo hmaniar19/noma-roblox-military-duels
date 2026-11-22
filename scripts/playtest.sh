@@ -10,12 +10,20 @@ PLACE="$PWD/.cache/playtest.rbxl"
 LOGS="$HOME/Library/Logs/Roblox"
 TIMEOUT=${PLAYTEST_TIMEOUT:-600}
 
-# Force-closing skips Studio's own cleanup, so also delete the place's lock file; a stale lock makes
-# the next open show a "file is in use" dialog that blocks Play.
+# Force-closing skips Studio's own cleanup, so also delete the place's lock file (a stale lock makes
+# the next open show a "file is in use" dialog that blocks Play). A force-close can also leave a
+# Studio process with no windows at all, which swallows the next open request and ignores a normal
+# quit; only such windowless processes are closed, never a window someone is working in.
 close_window() {
 	pgrep -f "RobloxStudio -localPlaceFile $PLACE" | xargs kill -9 2>/dev/null || true
-	sleep 1
+	sleep 2
 	rm -f "$PLACE.lock"
+	local windows
+	windows=$(osascript -e 'tell application "System Events" to if exists process "RobloxStudio" then count windows of process "RobloxStudio"' 2>/dev/null || echo "")
+	if [[ "$windows" == "0" ]]; then
+		pkill -9 -x RobloxStudio 2>/dev/null || true
+		sleep 2
+	fi
 }
 
 mkdir -p .cache
@@ -40,22 +48,28 @@ collect() {
 	done
 }
 
+# Look for the test window among Studio's own windows: Studio may open behind whatever app is in use.
 open -a RobloxStudio "$PLACE"
+found=""
 for _ in $(seq 1 90); do
-	front=$(osascript -e 'tell application "System Events" to tell (first process whose frontmost is true) to get name of front window' 2>/dev/null || true)
-	[[ "$front" == *playtest.rbxl* ]] && break
+	names=$(osascript -e 'tell application "System Events" to if exists process "RobloxStudio" then get name of every window of process "RobloxStudio"' 2>/dev/null || true)
+	[[ "$names" == *playtest.rbxl* ]] && found=1 && break
 	sleep 2
 done
-[[ "$front" == *playtest.rbxl* ]] || { echo "PLAYTEST Studio window never came up"; close_window; exit 1; }
+[[ -n "$found" ]] || { echo "PLAYTEST Studio window never came up"; close_window; exit 1; }
 
-# Press Play (F5) with Studio in front; press again if no test output shows up (Studio may still
-# have been loading, or another app took focus).
+# Press Play (F5) only while Studio is in front (a keypress goes to the frontmost app); press again if
+# no test output shows up (Studio may still have been loading, or another app took focus).
 started=0
 for attempt in 1 2 3; do
 	sleep 5
-	osascript -e 'tell application "RobloxStudio" to activate' 2>/dev/null || true
-	sleep 1
-	osascript -e 'tell application "System Events" to key code 96'
+	for _ in 1 2 3 4 5; do
+		osascript -e 'tell application "RobloxStudio" to activate' 2>/dev/null || true
+		sleep 1
+		front=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null || true)
+		[[ "$front" == "RobloxStudio" ]] && break
+	done
+	[[ "$front" == "RobloxStudio" ]] && osascript -e 'tell application "System Events" to key code 96'
 	for _ in $(seq 1 45); do
 		sleep 1
 		collect

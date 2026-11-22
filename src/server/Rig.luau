@@ -157,8 +157,9 @@ Players.PlayerRemoving:Connect(function(player)
 	descriptions[player.UserId] = nil
 end)
 
--- Roblox's default R15 animations, used for stand-ins on the celebration and cutscene stages.
-local ANIMATIONS = {
+-- Roblox's default R15 animations by name (emotes add their ids), for the celebration, cutscene and
+-- lobby stand-ins.
+local ANIMATIONS: { [string]: string } = {
 	cheer = "rbxassetid://507770677",
 	dance = "rbxassetid://507771019",
 	point = "rbxassetid://507770453",
@@ -188,6 +189,33 @@ function Rig.animate(model: Model, name: string, looped: boolean): AnimationTrac
 	track.Looped = looped
 	track:Play(0.2)
 	return track
+end
+
+-- Plays an emote from Config.Emotes: an animation id, or "pose:salute", built from code: the right
+-- hand raised to the brow for two seconds with a gold glint.
+function Rig.emote(model: Model, anim: string)
+	if anim ~= "pose:salute" then
+		ANIMATIONS[anim] = anim
+		Rig.animate(model, anim, false)
+		return
+	end
+	local arm = model:FindFirstChild("RightUpperArm")
+	local joint = arm and arm:FindFirstChild("RightShoulder")
+	local hand = model:FindFirstChild("RightHand")
+	if not joint or not joint:IsA("Motor6D") or model:GetAttribute("Saluting") then
+		return
+	end
+	model:SetAttribute("Saluting", true)
+	local rest = joint.C0
+	joint.C0 = rest * CFrame.Angles(math.rad(150), math.rad(-35), math.rad(40))
+	local glint = Instance.new("Sparkles")
+	glint.SparkleColor = Color3.fromRGB(235, 190, 60)
+	glint.Parent = hand
+	task.delay(2, function()
+		joint.C0 = rest
+		glint:Destroy()
+		model:SetAttribute("Saluting", nil)
+	end)
 end
 
 return Rig

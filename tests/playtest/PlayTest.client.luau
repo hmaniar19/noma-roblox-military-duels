@@ -46,12 +46,13 @@ local function shoot(target: Model, seconds: number): boolean
 				mine:Move((aim.Position - head.Position) * Vector3.new(1, 0, 1), false)
 				task.wait(0.25)
 				mine:Move(Vector3.zero)
+				-- Two shots: enough to see damage without ending the round (the server test ends it).
 				local before = humanoid.Health
-				for _ = 1, 6 do
+				for _ = 1, 2 do
 					local dir = (aim.Position - camera.CFrame.Position).Unit
 					remotes.Look:FireServer(dir)
 					remotes.Fire:FireServer(camera.CFrame.Position, dir)
-					task.wait(0.12)
+					task.wait(0.15)
 				end
 				task.wait(0.4)
 				if humanoid.Health < before then
@@ -74,13 +75,31 @@ local function onStep(name: string)
 		end
 		result("settings: color picker on screen", shown)
 		remotes.Settings:FireServer("Theme", "MidnightCyan")
+	elseif name == "PickStarter" then
+		task.wait(0.5)
+		local gui = player.PlayerGui:FindFirstChild("CampMoreManiar")
+		local shown = false
+		for _, d in (if gui then gui:GetDescendants() else {}) do
+			if d:IsA("TextLabel") and string.find(d.Text, "CHOOSE YOUR STARTER", 1, true) then
+				shown = (d.Parent :: GuiObject).Visible
+			end
+		end
+		result("starter: picker on screen", shown)
+		remotes.Settings:FireServer("Starter", "SMG", "ForestCamo")
+	elseif name == "EquipFinisher" then
+		remotes.Shop:FireServer("EquipFinisher", "Thunder")
 	elseif name == "TakeRackWeapon" then
 		local folder = workspace:WaitForChild("PracticeRange")
-		local prompt = (folder:FindFirstChildWhichIsA("Model") :: Model):FindFirstChildWhichIsA("ProximityPrompt", true)
-		if prompt then
+		local rack = folder:FindFirstChildWhichIsA("Model") :: Model
+		local prompt = rack:FindFirstChildWhichIsA("ProximityPrompt", true)
+		print(`PLAYTEST TRACE rack {rack.Name} prompt {prompt ~= nil}`)
+		-- The prompt only responds once it is showing; keep pressing E for a few seconds.
+		local deadline = os.clock() + 5
+		while prompt and os.clock() < deadline and player:GetAttribute("Arena") ~= "Practice" do
 			prompt:InputHoldBegin()
 			task.wait(0.1)
 			prompt:InputHoldEnd()
+			task.wait(0.4)
 		end
 	elseif name == "ShootTarget" then
 		local target = workspace:WaitForChild("PracticeRange"):FindFirstChild("Target")

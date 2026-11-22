@@ -32,12 +32,17 @@ Rules:
   - a draw plays the **handshake**: one fighter from each team walks to the middle and shakes hands.
 - The winning team gets a **celebration** in the sky above the arena, then everyone returns to the lobby.
 
-**Coins and the shop** (no real money, ever):
+**Coins, levels and the shop** (no real money, ever):
 - Win: 120 coins if the match-winning elimination was a headshot, otherwise 80. Losers get 10 per round they won. New players get 350 once ("beginner's luck").
+- **XP and levels:** 50 XP for finishing a match, +100 for a win, +20 per elimination. Level 100 takes about 185 matches (2–3 weeks of normal play).
+- **Level rewards:** level 50 unlocks **Ranked** (toggle it on the lobby bar; a win moves 25 rank points from loser to winner), level 100 unlocks **Double Trouble**, level 200 the **Eddie's Honor** title and the gold salute emote, level 300 **A Mother's Wrath**.
+- On your first join you choose a **starter weapon and its color** (a free skin, equipped on it).
 - **Shop › Skins** recolor weapons; equip them per weapon in **Inventory**.
-- **Shop › Weapons:** **Double Trouble** (twin dark katanas, melee) and **A Mother's Wrath** (dark-blue sniper with blue shots and lightning). They have exactly the stats of the Combat Knife and the Sniper; pick them on the loadout screen.
-- Developers listed in `Config.Developers` own everything for free.
-- Coins save with DataStore on published places; in Studio without API access they last for the session.
+- **Shop › Weapons:** **Double Trouble** (twin dark katanas, melee) and **A Mother's Wrath** (dark-blue sniper with blue shots and lightning). They have exactly the stats of the Combat Knife and the Sniper; buy them with coins or reach their level, then pick them on the loadout screen.
+- **Shop › Finishers:** ink styles for your round-win anime finisher (Crimson is free).
+- **Emotes** (lobby): wave, cheer, dance and point are free for everyone; the gold salute needs Eddie's Honor.
+- Developers listed in `Config.Developers` own every shop item for free.
+- Progress saves with DataStore on published places; in Studio without API access it lasts for the session.
 
 **Anti-cheat:** the place runs with Roblox **Server Authority** (`Workspace.AuthorityMode = Server`), so the server simulates all movement and the server script refuses to start without it. Every shot is validated and cast on the server (ammo, fire rate, origin, aim vs facing and reported look, walls, lag-compensated hitboxes). Rejected actions add to the `CheatFlags` player attribute.
 

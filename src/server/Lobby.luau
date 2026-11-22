@@ -11,6 +11,7 @@ local Economy = require(script.Parent.Economy)
 local Loadout = require(script.Parent.Loadout)
 local Net = require(script.Parent.Net)
 local PracticeRange = require(script.Parent.PracticeRange)
+local Rig = require(script.Parent.Rig)
 local World = require(script.Parent.World)
 
 local Lobby = {}
@@ -86,6 +87,19 @@ function Lobby.run(world: World.World)
 		end
 		if action == "Join" and typeof(mapId) == "string" and arenas[mapId] then
 			arenas[mapId].join(player, if mode == "2v2" then "2v2" else "1v1")
+		end
+	end)
+
+	-- Free emotes in Camp More Maniar; the gold salute is for players with the Eddie's Honor title.
+	Net.Emote.OnServerEvent:Connect(function(player, id)
+		local character = player.Character
+		if not character or player:GetAttribute("Arena") ~= nil or not Net.allow(player, "Emote", 1, 2) then
+			return
+		end
+		for _, e in Config.Emotes do
+			if e.id == id and (e.title == nil or player:GetAttribute("Title") == e.title) then
+				Rig.emote(character, e.anim)
+			end
 		end
 	end)
 

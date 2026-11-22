@@ -78,6 +78,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	local lastZone: Config.Zone? = nil -- zone of the latest elimination (for the payout)
 	-- The latest elimination by someone else, for the round-end cutscenes (bullet cam, finisher).
 	local lastKill: { attacker: Combatant, victim: Combatant, from: Vector3, to: Vector3 }? = nil
+	local kills: { [Player]: number } = {} -- eliminations this match, for XP
 
 	local function setPhase(phase: string)
 		state:SetAttribute("Phase", phase)
@@ -146,6 +147,9 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			-- Only a kill by someone else can make the deciding elimination a headshot.
 			lastZone = if attacker and attacker ~= victim then zone else nil
 			if attacker and attacker ~= victim then
+				if attacker.player then
+					kills[attacker.player] = (kills[attacker.player] or 0) + 1
+				end
 				lastElimination = `{attacker.name} eliminated {victim.name}`
 					.. (if zone == "Head" then " with a HEADSHOT" else "")
 				lastKill = {
@@ -306,6 +310,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		victor.root.CFrame = CFrame.lookAt(stand, Vector3.new(at.X, stand.Y, at.Z))
 		cutscene("Finisher", {
 			winnerName = victor.name,
+			ink = Economy.finisherInk(victor.player),
 			winnerTeam = winner,
 			defeatedName = defeated.name,
 			winnerPos = stand,
@@ -334,8 +339,9 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 					local userId = if e.player then e.player.UserId else e.userId
 					local model =
 						Rig.spawnBot(team, e.name, CFrame.lookAt(start, center + Vector3.new(0, 3, 0)), rides, userId)
-					model.PrimaryPart = model:FindFirstChild("HumanoidRootPart") :: BasePart
-					(model.PrimaryPart :: BasePart).Anchored = true
+					local actorRoot = model:FindFirstChild("HumanoidRootPart") :: BasePart
+					model.PrimaryPart = actorRoot
+					actorRoot.Anchored = true
 					table.insert(actors, model)
 					break
 				end
@@ -504,24 +510,29 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	end
 
 	-- Noelle's rules: the winners earn 120 if the match-winning elimination was a headshot, else 80
-	-- (a forfeit win counts as 80); the losers earn 10 for each round they won.
+	-- (a forfeit win counts as 80); the losers earn 10 for each round they won. Everyone who finishes
+	-- earns XP (more for a win and per elimination), and ranked players gain or lose rank points.
 	local function payout(winner: TeamId, scores: Scores, headshot: boolean)
-		local P = Config.Payouts
+		local P, X = Config.Payouts, Config.Xp
 		for _, e in roster do
 			local player = e.player
 			if player and player.Parent then
-				if e.team == winner then
+				local won = e.team == winner
+				if won then
 					local amount = if headshot then P.WinHeadshot else P.WinBody
 					Economy.award(player, amount, if headshot then "Headshot win!" else "Victory!")
 				elseif scores[e.team] > 0 then
 					Economy.award(player, P.LoserPerRound * scores[e.team], `{scores[e.team]} round(s) won`)
 				end
+				Economy.awardXp(player, X.Finish + (if won then X.Win else 0) + X.Elimination * (kills[player] or 0))
+				Economy.ranked(player, won)
 			end
 		end
 	end
 
 	local function playMatch()
 		local scores: Scores = { Navy = 0, Grey = 0 }
+		table.clear(kills)
 		state:SetAttribute("NavyScore", 0)
 		state:SetAttribute("GreyScore", 0)
 		state:SetAttribute("NavyName", teamNames("Navy"))

@@ -244,6 +244,50 @@ local Config = {
 		[11238400758] = "Aar0nBu44", -- Noelle, the game's designer
 	} :: { [number]: string },
 
+	-- XP and levels. A typical match (finish + some eliminations, a win half the time) is ~160 XP;
+	-- level 100 needs ~29,700 XP, about 185 matches: 2-3 weeks of normal play.
+	Xp = {
+		Finish = 50, -- for playing a match to the end
+		Win = 100,
+		Elimination = 20,
+		Base = 100, -- XP from level L to L+1 is Base + PerLevel * L
+		PerLevel = 4,
+	},
+	-- Level rewards. Unlocks are cosmetic or modes only; weapons keep the stats of their base weapon.
+	Unlocks = {
+		{ level = 50, kind = "Mode", id = "Ranked", name = "Ranked mode" },
+		{ level = 100, kind = "Item", id = "DoubleTrouble", name = "Double Trouble" },
+		{ level = 200, kind = "Title", id = "EddiesHonor", name = "Eddie's Honor title + gold salute" },
+		{ level = 300, kind = "Item", id = "MothersWrath", name = "A Mother's Wrath" },
+	} :: { { level: number, kind: string, id: string, name: string } },
+	RankedStart = 1000, -- Rank Points for a new ranked player; a win moves 25 points from loser to winner
+	RankedSwing = 25,
+
+	-- Anime finisher styles (Shop > FINISHERS): the ink color and slash style of your round-win finisher.
+	Finishers = {
+		{ id = "Crimson", name = "Crimson Ink", price = 0, ink = Color3.fromRGB(200, 20, 30) },
+		{ id = "Midnight", name = "Midnight Ink", price = 250, ink = Color3.fromRGB(40, 40, 120) },
+		{ id = "Gold", name = "Golden Strike", price = 500, ink = Color3.fromRGB(235, 190, 60) },
+		{ id = "Sakura", name = "Sakura Storm", price = 500, ink = Color3.fromRGB(250, 140, 190) },
+		{ id = "Thunder", name = "Thunder Blue", price = 800, ink = Color3.fromRGB(70, 170, 255) },
+	} :: { { id: string, name: string, price: number, ink: Color3 } },
+
+	-- Free emotes for everyone: Roblox's default animations, or a pose built from code ("pose:").
+	-- The gold salute needs the Eddie's Honor title.
+	Emotes = {
+		{ id = "Wave", name = "Wave", anim = "rbxassetid://507770239" },
+		{ id = "Cheer", name = "Cheer", anim = "rbxassetid://507770677" },
+		{ id = "Dance", name = "Dance", anim = "rbxassetid://507771019" },
+		{ id = "Point", name = "Point", anim = "rbxassetid://507770453" },
+		{ id = "Salute", name = "Gold Salute", anim = "pose:salute", title = "EddiesHonor" },
+	} :: { { id: string, name: string, anim: string, title: string? } },
+
+	-- First-join starter pick: a primary and its base color (a free starter skin for that weapon).
+	Starter = {
+		Weapons = { "AR", "SMG", "Shotgun", "Sniper" },
+		Colors = { "DesertCamo", "ForestCamo", "ArcticWhite", "NavySteel" },
+	},
+
 	-- Coins (earned by playing only; never sold). Noelle's payout rules.
 	Payouts = {
 		WinHeadshot = 120, -- the match-winning shot was a headshot

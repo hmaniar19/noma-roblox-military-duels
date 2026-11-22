@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Profile = require(ReplicatedStorage.Shared.Profile)
 local Theme = require(script.Parent.Theme)
 local Weapon = require(script.Parent.Weapon)
 
@@ -156,7 +157,7 @@ local function showOwned(buttons: Row, order: { string }): number
 		local isShop = Config.Weapons[id] ~= nil
 			and table.find(Config.Loadout.Primary, id) == nil
 			and id ~= Config.Loadout.Melee
-		b.Visible = not isShop or player:GetAttribute("Owns_" .. id) == true
+		b.Visible = not isShop or Profile.owns(player, id)
 		if b.Visible then
 			b.Position = UDim2.fromOffset(120 + shown * 160, 2)
 			shown += 1

@@ -42,7 +42,7 @@
       "Terrain": {
         "$properties": {
           "Decoration": true,
-          "GrassLength": 1
+          "GrassLength": 0.7
         }
       }
     },
