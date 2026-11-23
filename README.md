@@ -8,18 +8,21 @@ The full design is in `research/brief.md`. Code lives in `src/` and syncs into R
 ## Play it
 
 1. `rojo build default.project.json -o MilitaryDuels.rbxl`, then open the file in Roblox Studio and press **Play**.
-2. A loading screen shows the dedication ("Military Duels — dedicated to Joanna & Eddie Moore"), then you spawn in **Camp More Maniar**, the lobby: the statue of Joanna and Eddie Moore, the shop, the armory, the coin leaderboard and a free **practice range** (walk up to a rack and press **E** to try any weapon on the target dummies; walk off the range or press LEAVE RANGE to stop). On your first join you pick your HUD colors; change them any time with **SETTINGS**.
+2. A loading screen shows the dedication ("Military Duels — dedicated to Joanna & Eddie Moore"), then you spawn in **Camp More Maniar**, the lobby: the statue of Joanna and Eddie Moore, the shop, the armory, the coin leaderboard and a free **practice range** (walk up to a rack and press **E** to try any weapon on the target dummies; walk off the range or press LEAVE RANGE to stop). On your first join you pick your HUD colors and a starter weapon, or press **USE DEFAULTS & PLAY** to skip straight into a 1v1. Change colors any time with **SETTINGS**.
 3. On the bottom bar:
    - pick a map: **Shooting Range**, **Desert Outpost** or **Urban Training Town**;
    - pick **1v1** or **2v2**;
    - press **PLAY**.
 
-   Everyone who queues for the same map plays together; the first player in the queue picks the mode, and bots fill empty slots. Bots wear the avatars and names of the players' Roblox friends. All three maps can run matches at the same time.
+   PLAY shows LOADING PROFILE until your save has loaded. 1v1 and 2v2 have separate queues on each map; a match fills from players who picked its mode, and bots fill empty slots after 10 s (ranked queues wait for real players). Bots wear the avatars and names of the players' Roblox friends. All three maps can run matches at the same time.
 4. **Each round starts with a drop-in** (10 s), picked at random: a helicopter fast-rope, an army truck, a parachute jump or an armored car. Pick your loadout during the ride: a primary (Assault Rifle, SMG, Shotgun or Sniper), a melee and a gadget (Frag, Smoke or Med Kit). Everyone also carries a Pistol. You can't act until you land; the spawn shield starts at landing.
 5. Controls:
    - **click** fires or swings; **right-click** aims (the sniper scopes in)
    - **R** reloads; **1 / 2 / 3** or the mouse wheel switches weapons; **G** uses the gadget
    - **Shift** sprints; **C** crouches, or slides while sprinting; **Space** twice double-jumps
+   - **Gamepad:** R2 fire, L2 aim, X reload, Y switch weapon, B crouch/slide, L3 sprint, D-pad up gadget
+   - **Touch:** on-screen FIRE, AIM, RELOAD, SWAP, GADGET and CROUCH buttons during matches
+   - **LEAVE MATCH** (top right) concedes; it counts as a loss
 
 Rules:
 - First to 5 round wins. Each round lasts 2:00; a timeout is a draw with no point. Teams swap sides every round.
@@ -44,7 +47,10 @@ Rules:
 - Developers listed in `Config.Developers` own every shop item for free.
 - Progress saves with DataStore on published places; in Studio without API access it lasts for the session.
 
-**Anti-cheat:** the place runs with Roblox **Server Authority** (`Workspace.AuthorityMode = Server`), so the server simulates all movement and the server script refuses to start without it. Every shot is validated and cast on the server (ammo, fire rate, origin, aim vs facing and reported look, walls, lag-compensated hitboxes). Rejected actions add to the `CheatFlags` player attribute.
+**Anti-cheat:** the place runs with Roblox **Server Authority** (`Workspace.AuthorityMode = Server`), so the server simulates all movement and the server script refuses to start without it. Every shot is validated and cast on the server (ammo, fire rate, origin against the shooter's own recent positions, aim vs facing and reported look, walls, lag-compensated hitboxes including crouch), and the server checks movement deltas (too-fast travel snaps back). Every remote is rate-limited and type-checked.
+- **Flags and Bot Bootcamp:** rejected actions add a weighted suspicion score (`CheatFlags`) that drains 4 points a minute, so lag blips never add up. At 15 the account enters **Bot Bootcamp** (saved): its matches are solo against perfect bots, and 3 clean matches in a row get it out.
+- **REPORT** (bottom left, during a match and for a minute after): saves your last completed round (everyone's positions 5×/s and every shot) to the `MilitaryDuels_Reports` DataStore for review.
+- Wins and losses are saved; leaving mid-match is a saved loss.
 
 ## Checking and testing
 
