@@ -2,8 +2,10 @@
 -- Report button recorder. Each arena records its current round (positions 5 times a second and every
 -- trigger pull); when a round ends it becomes that arena's "last round". A report saves the reporter's
 -- last completed round (or the one in progress if none has finished yet), tagged by match and round.
+-- Like the HUD's button, a report is accepted only during a match and for a minute after it.
 local DataStoreService = game:GetService("DataStoreService")
 local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local Combatants = require(script.Parent.Combatants)
@@ -15,6 +17,7 @@ local SAMPLE_SECONDS = 0.2
 -- A 2:00 round plus its ride is ~130 s; 4 fighters at 5 Hz plus shots stays far under this cap, and
 -- at about 120 bytes a row far under DataStore's 4 MB value limit.
 local MAX_ROWS = 6000
+local REPORT_WINDOW = 62 -- seconds after leaving a match: the HUD's minute plus replication slack
 local UNITS = "t: 0.1 s server time; pos: 0.1 studs; dir: 0.001. p = {t, name, userId (0 = bot), team, x, y, z, "
 	.. "alive}; s = {t, name, ox, oy, oz, dx, dy, dz, hit, zone}"
 
@@ -31,6 +34,7 @@ local current: { [string]: Log } = {}
 -- the reporter actually played, never a later match on the same map.
 local newest: { [Player]: Log } = setmetatable({}, { __mode = "k" }) :: any
 local previous: { [Player]: Log } = setmetatable({}, { __mode = "k" }) :: any
+local lastInMatch: { [Player]: number } = setmetatable({}, { __mode = "k" }) :: any -- os.clock()
 
 local function now(): number
 	return math.round(workspace:GetServerTimeNow() * 10)
@@ -70,6 +74,12 @@ local function record()
 	while true do
 		task.wait(SAMPLE_SECONDS)
 		local t = now()
+		for _, player in Players:GetPlayers() do
+			local arena = player:GetAttribute("Arena")
+			if arena ~= nil and arena ~= "Practice" then
+				lastInMatch[player] = os.clock()
+			end
+		end
 		for _, c in Combatants.all() do
 			local id = c.arena.id
 			if current[id] then
@@ -91,7 +101,7 @@ local function submit(player: Player, target: number?): boolean
 	if log and not log.done and previous[player] and previous[player].match == log.match then
 		log = previous[player]
 	end
-	if not log then
+	if not log or os.clock() - (lastInMatch[player] or -math.huge) > REPORT_WINDOW then
 		return false
 	end
 	local seen = false -- only someone who was actually in the logged round can be the target
@@ -107,7 +117,7 @@ local function submit(player: Player, target: number?): boolean
 		match = log.match,
 		round = log.round,
 		units = UNITS,
-		rows = log.rows,
+		rows = table.clone(log.rows), -- a copy: a round still in progress keeps recording
 		complete = log.done, -- false: the reporter's first round, still in progress
 	}
 	local key = `report_{time}_{player.UserId}`

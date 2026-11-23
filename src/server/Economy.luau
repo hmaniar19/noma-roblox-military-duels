@@ -151,8 +151,9 @@ local function save(player: Player, release: boolean?)
 	local snap: any = table.clone(p)
 	snap.owned, snap.equipped = table.clone(p.owned), table.clone(p.equipped)
 	snap.lock = if release then nil else { job = JOB, at = os.time() }
-	local ok, err = pcall(function()
-		(store :: DataStore):UpdateAsync(key(player), function(old: any)
+	snap.rev = HttpService:GenerateGUID(false) -- proves the committed record is this write
+	local ok, result = pcall(function()
+		return (store :: DataStore):UpdateAsync(key(player), function(old: any)
 			local lock = if typeof(old) == "table" and typeof(old.lock) == "table" then old.lock else nil
 			if lock and lock.job ~= JOB then
 				warn(`[Economy] not saving {player.UserId}: another server now owns this profile`)
@@ -162,11 +163,11 @@ local function save(player: Player, release: boolean?)
 		end)
 	end)
 	saving[player] = nil
-	if not ok then
-		dirty[player] = true -- retried by the save loop
-		if not warnedNoSave then
+	if not (ok and typeof(result) == "table" and result.rev == snap.rev) then
+		dirty[player] = true -- cancelled or failed: retried by the save loop
+		if not ok and not warnedNoSave then
 			warnedNoSave = true
-			warn(`[Economy] saving is unavailable ({err}); progress lasts for this session only`)
+			warn(`[Economy] saving is unavailable ({result}); progress lasts for this session only`)
 		end
 	end
 end
@@ -191,23 +192,21 @@ end
 -- Returns ok and the data.
 local function claim(player: Player): (boolean, any)
 	for _ = 1, 10 do
-		local claimed, data = false, nil
-		local ok, err = pcall(function()
-			(store :: DataStore):UpdateAsync(key(player), function(old: any)
+		local ok, result = pcall(function()
+			return (store :: DataStore):UpdateAsync(key(player), function(old: any)
 				local lock = if typeof(old) == "table" and typeof(old.lock) == "table" then old.lock else nil
 				if lock and lock.job ~= JOB and typeof(lock.at) == "number" and os.time() - lock.at < LOCK_TTL then
 					return nil
 				end
-				local record = if typeof(old) == "table" then old else {}
+				local record: any = if typeof(old) == "table" then table.clone(old) else {}
 				record.lock = { job = JOB, at = os.time() }
-				claimed, data = true, old
 				return record
 			end)
 		end)
 		if not ok then
-			return false, err
-		elseif claimed then
-			return true, data
+			return false, result
+		elseif typeof(result) == "table" and typeof(result.lock) == "table" and result.lock.job == JOB then
+			return true, result -- the committed record carries this server's lock
 		end
 		task.wait(3)
 	end

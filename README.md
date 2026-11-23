@@ -52,7 +52,7 @@ Rules:
 **Anti-cheat:** the place runs with Roblox **Server Authority** (`Workspace.AuthorityMode = Server`), so the server simulates all movement and the server script refuses to start without it. Every shot is validated and cast on the server (ammo, fire rate, origin against the shooter's own recent positions, aim vs facing and reported look, walls, lag-compensated hitboxes including crouch), and the server checks movement deltas (too-fast travel snaps back). Every remote is rate-limited and type-checked.
 - **Flags and Bot Bootcamp:** rejected actions add a weighted suspicion score (`CheatFlags`) that drains 4 points a minute, so lag blips never add up. At 15 the account enters **Bot Bootcamp** (saved): its matches are solo against perfect bots, and 3 clean matches in a row get it out.
 - **REPORT** (bottom left, during a match and for a minute after): saves your last completed round (everyone's positions 5×/s and every shot) to the `MilitaryDuels_Reports` DataStore for review.
-- Wins and losses are saved; leaving mid-match is a saved loss.
+- Wins and losses are saved; leaving mid-match is a saved loss (paid at once: 10 coins per round your team had won, and rank points in a ranked match).
 
 ## Checking and testing
 
