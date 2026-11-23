@@ -155,7 +155,8 @@ local function tooFast(c: Combatants.Combatant, pos: Vector3, now: number): bool
 	local last = moved[c]
 	local fresh = not last or last.t ~= c.lastCheck
 	moved[c] = { at = pos, t = now }
-	if fresh then
+	-- The lobby practice range has nothing to win, and its exit is decided by where the player is.
+	if fresh or c.arena.id == "Practice" then
 		return false
 	end
 	local base = last :: { at: Vector3, t: number }
