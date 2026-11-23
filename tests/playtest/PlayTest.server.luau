@@ -9,6 +9,8 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Server = ServerScriptService:WaitForChild("Server")
 local Combat = require(Server:WaitForChild("Combat"))
 local Combatants = require(Server:WaitForChild("Combatants"))
+local Economy = require(Server:WaitForChild("Economy"))
+local Report = require(Server:WaitForChild("Report"))
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local Profile = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Profile"))
 
@@ -268,16 +270,37 @@ result(
 step("ReportCutscenes")
 task.wait(1)
 
+-- REPORT from the lobby saves the round just played (in Studio without DataStore access, in memory).
+step("SendReport")
+result(
+	"report: last round saved",
+	waitFor(10, function()
+		local last = Report.saved[1]
+		return last ~= nil and last.payload.reporter == player.UserId and #last.payload.rows > 0
+	end),
+	#Report.saved
+)
+
 -- Bots on the other two maps: a short match on each, first to 1.
 Config.RoundsToWin = 1
 for _, mapId in { "DesertOutpost", "UrbanTown" } do
 	local arena = arenas:WaitForChild(mapId)
+	-- Desert Outpost doubles as the Bot Bootcamp check: a flagged player plays perfect bots alone.
+	local bootcamp = mapId == "DesertOutpost"
+	if bootcamp then
+		Economy.setBootcamp(player, true)
+		result("bootcamp: status published", player:GetAttribute("Bootcamp") == true)
+	end
 	step("Queue" .. mapId)
 	local live = waitFor(60, function()
 		return arena:GetAttribute("Phase") == "Live"
 	end)
 	result(`{mapId}: match goes live`, live, arena:GetAttribute("Phase"))
 	local b = botOf(mapId)
+	if bootcamp then
+		result("bootcamp: solo match", arena:GetAttribute("Bootcamp") == true, arena:GetAttribute("Bootcamp"))
+		result("bootcamp: bots play perfectly", b ~= nil and b.perfect == true)
+	end
 	if live and b then
 		local start, moved = b.root.Position, 0
 		local deadline = os.clock() + 20
@@ -294,6 +317,9 @@ for _, mapId in { "DesertOutpost", "UrbanTown" } do
 		result(`bot: present on {mapId}`, false, "no bot")
 	end
 	result(`{mapId}: back in the lobby after the match`, waitFor(Config.MatchEndSeconds + 25, inLobby))
+	if bootcamp then
+		Economy.setBootcamp(player, false)
+	end
 end
 
 step("Done")

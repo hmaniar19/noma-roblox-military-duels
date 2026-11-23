@@ -133,6 +133,8 @@ local function onStep(name: string)
 			got
 		)
 		table.clear(cutscenes)
+	elseif name == "SendReport" then
+		remotes.Report:FireServer()
 	elseif name == "QueueDesertOutpost" or name == "QueueUrbanTown" then
 		remotes.Queue:FireServer("Join", string.sub(name, 6), "1v1")
 	elseif name == "Done" then
