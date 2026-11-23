@@ -626,7 +626,9 @@ RunService.RenderStepped:Connect(function(dt: number)
 		0.5 * sprintBlend,
 		0.2 * sprintBlend
 	)
-	viewmodel.Parent = if Weapon.scoped then nil else camera
+	-- A scripted camera (the drop-in ride cam) is a third-person shot: no first-person gun.
+	local hidden = Weapon.scoped or camera.CameraType == Enum.CameraType.Scriptable
+	viewmodel.Parent = if hidden then nil else camera
 	viewmodel:PivotTo(camera.CFrame * offset * kick * stab * pose * dip)
 	if viewmodel.PrimaryPart then
 		animateParts(viewmodel.PrimaryPart, id, t, now - lastFire)
