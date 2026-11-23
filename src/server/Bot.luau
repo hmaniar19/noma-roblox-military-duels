@@ -87,7 +87,7 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 
 	while c.alive and root.Parent do
 		local now = os.clock()
-		if not Combat.isLive() then
+		if not Combat.isLive(c) then
 			humanoid:Move(Vector3.zero)
 			task.wait(B.Think)
 			continue
@@ -150,7 +150,7 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 			else
 				humanoid:Move(root.CFrame.RightVector * strafe)
 			end
-			c.aiming = w.kind == "gun" and (best > 60 or id == "Sniper")
+			c.aiming = w.kind == "gun" and (best > 60 or w.scoped)
 			humanoid.WalkSpeed = if c.aiming then Config.AimWalkSpeed else Config.WalkSpeed
 			local inReach = best <= (if w.kind == "melee" then w.range else w.botRange * 2.5)
 			if inReach and now - (seenSince :: number) >= B.ReactionTime and now >= nextShot then
@@ -158,7 +158,16 @@ function Bot.run(c: Combatant, waypoints: { Vector3 }, enemies: () -> { Combatan
 					then (target.root.CFrame * CFrame.new(Config.Hitboxes[1].offset)).Position
 					else spot
 				local eye = Combat.headPosition(c)
-				local err = B.AimErrorDegrees * (1 + best / 120) * (if id == "Sniper" then 0.3 else 1)
+				-- Human-like misses: aim starts rough and settles over the first moments on a target,
+				-- and a running target is harder to track.
+				local settle = 1 + math.max(0, B.AimSettleSeconds - (now - (seenSince :: number))) / B.AimSettleSeconds
+				local v = target.root.AssemblyLinearVelocity
+				local running = if Vector3.new(v.X, 0, v.Z).Magnitude > 10 then B.MovingTargetPenalty else 1
+				local err = B.AimErrorDegrees
+					* (1 + best / 120)
+					* settle
+					* running
+					* (if w.scoped then B.SniperAimScale else 1)
 				Combat.fire(c, eye, Hitbox.spread((aimAt - eye).Unit, err, rng))
 				burstLeft -= 1
 				nextShot = now + w.fireInterval + (if w.auto then 0 else 0.2)

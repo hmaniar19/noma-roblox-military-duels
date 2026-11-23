@@ -79,8 +79,6 @@ local function inside(p: Vector3, lo: Vector3, hi: Vector3): boolean
 	return p.X >= lo.X and p.X <= hi.X and p.Y >= lo.Y and p.Y <= hi.Y and p.Z >= lo.Z and p.Z <= hi.Z
 end
 
-local boundsMin, boundsMax = Vector3.zero, Vector3.zero
-
 -- Physics glitches (wedging into geometry, getting flung) can still push a character out of the map;
 -- anything that ends up outside is returned to its last grounded spot.
 local function check(c: Combatants.Combatant, now: number, force: boolean)
@@ -90,9 +88,11 @@ local function check(c: Combatants.Combatant, now: number, force: boolean)
 	c.lastCheck = now
 	local root = c.root
 	local pos = root.Position
+	local boundsMin, boundsMax = c.arena.boundsMin, c.arena.boundsMax
 	if inside(pos, boundsMin, boundsMax) then
 		if c.humanoid.FloorMaterial ~= Enum.Material.Air then
 			c.lastGrounded = root.CFrame
+			c.doubleJumped = false -- landing recharges the mid-air jump
 		end
 		return
 	end
@@ -110,8 +110,7 @@ function AntiCheat.validate(c: Combatants.Combatant)
 	end
 end
 
-function AntiCheat.start(min: Vector3, max: Vector3)
-	boundsMin, boundsMax = min, max
+function AntiCheat.start()
 	-- Movement is only cheat-proof under Server Authority; refuse to run a duel when it is off. The
 	-- property is readable in Studio and live servers today; the pcall keeps a future restriction on
 	-- reading it from taking the whole server down.

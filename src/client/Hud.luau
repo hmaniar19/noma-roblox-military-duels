@@ -11,7 +11,7 @@ local Weapon = require(script.Parent.Weapon)
 
 local player = Players.LocalPlayer :: Player
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
-local state = ReplicatedStorage:WaitForChild("GameState")
+local state = require(script.Parent.ArenaState)
 local HitConfirm = remotes:WaitForChild("HitConfirm") :: RemoteEvent
 local Damaged = remotes:WaitForChild("Damaged") :: RemoteEvent
 local Banner = remotes:WaitForChild("Banner") :: RemoteEvent
@@ -130,7 +130,7 @@ local hint = text(
 	Color3.fromRGB(210, 210, 210)
 )
 hint.TextXAlignment = Enum.TextXAlignment.Right
-hint.Text = "CLICK fire  RIGHT-CLICK aim  R reload  1-3/WHEEL switch  G gadget"
+hint.Text = "CLICK fire  RCLICK aim  R reload  1-3 switch  G gadget  SHIFT sprint  C crouch/slide  SPACE x2 jump"
 local slotsLabel = text(gui, UDim2.fromOffset(460, 20), UDim2.new(1, -24, 1, -92), Vector2.new(1, 1), 15)
 slotsLabel.TextXAlignment = Enum.TextXAlignment.Right
 
@@ -196,7 +196,6 @@ shield.Text = "SPAWN SHIELD (firing drops it)"
 -- Big center banner
 local bannerTitle = text(gui, UDim2.fromOffset(800, 90), UDim2.fromScale(0.5, 0.28), Vector2.new(0.5, 0.5), 72)
 local bannerSub = text(gui, UDim2.fromOffset(800, 40), UDim2.fromScale(0.5, 0.36), Vector2.new(0.5, 0.5), 24)
-local status = text(gui, UDim2.fromOffset(700, 30), UDim2.fromScale(0.5, 0.6), Vector2.new(0.5, 0.5), 22)
 local bannerUntil = 0
 
 local function showBanner(title: string, sub: string, color: Color3, seconds: number)
@@ -217,7 +216,7 @@ Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 	local team = myTeam()
 	if kind == "RoundStart" then
 		local mySide = if team == "Navy" then data.navySide elseif data.navySide == "A" then "B" else "A"
-		local sub = if team then `You start on SIDE {mySide}` else "Watching from the gallery"
+		local sub = if team then `You start on SIDE {mySide}` else ""
 		if data.sudden then
 			showBanner("SUDDEN DEATH", "4 - 4. Win this round to take the match.", LOSE, Config.FreezeSeconds)
 		else
@@ -252,6 +251,28 @@ Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 		else
 			showBanner(`{Config.Teams[data.winner :: Config.TeamId].name} WINS`, how, GOLD, Config.MatchEndSeconds)
 		end
+	elseif kind == "Celebrate" then
+		-- Sweep across the celebration stage, closing in, then hand the camera back.
+		local camera = workspace.CurrentCamera
+		local focus: Vector3 = data.focus
+		local seconds: number = data.seconds
+		local started = os.clock()
+		camera.CameraType = Enum.CameraType.Scriptable
+		local sweep: RBXScriptConnection
+		sweep = RunService.RenderStepped:Connect(function()
+			local t = (os.clock() - started) / seconds
+			if t >= 1 then
+				sweep:Disconnect()
+				camera.CameraType = Enum.CameraType.Custom
+				return
+			end
+			-- Reasserted every frame: the stage respawn can hand the camera back to the default scripts.
+			camera.CameraType = Enum.CameraType.Scriptable
+			local angle = math.rad(-40 + 80 * t)
+			local radius = 34 - 12 * t
+			local eye = focus + Vector3.new(math.sin(angle) * radius, 7 - 3 * t, math.cos(angle) * radius)
+			camera.CFrame = CFrame.lookAt(eye, focus)
+		end)
 	end
 end)
 
@@ -296,6 +317,7 @@ end
 
 RunService.RenderStepped:Connect(function()
 	local phase = state:GetAttribute("Phase")
+	board.Visible = phase ~= nil -- only while in a match; the lobby bar replaces it at Camp More Maniar
 	local now = workspace:GetServerTimeNow()
 	navyName.Text = state:GetAttribute("NavyName") or "NAVY"
 	greyName.Text = state:GetAttribute("GreyName") or "GREY"
@@ -319,11 +341,8 @@ RunService.RenderStepped:Connect(function()
 	if team then
 		teamLabel.Text = `YOU: {Config.Teams[team].name}`
 		teamLabel.TextColor3 = Config.Teams[team].hud
-	elseif phase == "Waiting" then
-		teamLabel.Text = ""
 	else
-		teamLabel.Text = "SPECTATING"
-		teamLabel.TextColor3 = Color3.new(1, 1, 1)
+		teamLabel.Text = ""
 	end
 	local character = player.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -351,7 +370,7 @@ RunService.RenderStepped:Connect(function()
 		slotsLabel.Text = table.concat(parts, "   ")
 		ammoText.Text = if not w
 			then ""
-			elseif w.kind == "melee" then "KNIFE"
+			elseif w.kind == "melee" then string.upper(w.name)
 			elseif player:GetAttribute("Reloading") then "RELOADING"
 			else `{player:GetAttribute("Ammo") or 0} / {w.magazine}`
 		local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -371,13 +390,6 @@ RunService.RenderStepped:Connect(function()
 	shield.Visible = combat and (healing or player:GetAttribute("Shielded") == true)
 	local showing = os.clock() < bannerUntil
 	bannerTitle.Visible, bannerSub.Visible = showing, showing
-	if phase == "Waiting" or phase == "Lobby" then
-		status.Text = "Getting the range ready..."
-	elseif not team and phase ~= "MatchEnd" then
-		status.Text = "A duel is in progress. You're in the queue for the next match."
-	else
-		status.Text = ""
-	end
 end)
 
 return {}

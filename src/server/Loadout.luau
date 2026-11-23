@@ -1,7 +1,8 @@
 --!strict
--- Loadout picks. Normal rounds: a primary and a gadget from the pre-round screen, plus the pistol and
--- the knife everyone carries. Sudden Death (4-4): each team gets one sniper and one knife; players
--- ask for a role and the server resolves who gets what. Picks are validated against Config.Loadout.
+-- Loadout picks. Normal rounds: a primary, a melee and a gadget from the pre-round screen, plus the
+-- pistol everyone carries. Shop weapons (A Mother's Wrath, Double Trouble) can be picked for their
+-- slot once owned. Sudden Death (4-4): each team gets one sniper and one melee fighter; players ask
+-- for a role and the server resolves who gets what. Picks are validated on the server.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -13,11 +14,11 @@ type GadgetId = Config.GadgetId
 type Role = Config.Role
 
 export type Kit = { weapons: { WeaponId }, gadget: GadgetId? }
-type Choice = { primary: WeaponId, gadget: GadgetId, role: Role? }
+type Choice = { primary: WeaponId, melee: WeaponId, gadget: GadgetId, role: Role? }
 
 local Loadout = {}
 
--- Set by Match: called after a player changes a pick so the change shows up during the freeze.
+-- Set by the arena registry: called after a player changes a pick so it shows during the freeze.
 Loadout.onChange = function(_player: Player) end
 
 local choices: { [Player]: Choice } = {}
@@ -26,27 +27,57 @@ local random = Random.new()
 local function choiceOf(player: Player): Choice
 	local c = choices[player]
 	if not c then
-		c = { primary = "AR", gadget = "Frag", role = nil }
+		c = { primary = "AR", melee = Config.Loadout.Melee, gadget = "Frag", role = nil }
 		choices[player] = c
 	end
 	return c
+end
+
+-- True if `id` may go in `slot` for this player: a standard option, or a shop weapon for that slot
+-- that the server has recorded as owned (Economy publishes "Owns_<id>").
+local function allowed(player: Player, slot: string, id: string): boolean
+	if
+		slot == "Primary" and table.find(Config.Loadout.Primary, id)
+		or slot == "Melee" and id == Config.Loadout.Melee
+	then
+		return true
+	end
+	for _, w in Config.ShopWeapons do
+		if w.id == id and w.slot == slot then
+			return player:GetAttribute("Owns_" .. id) == true
+		end
+	end
+	return false
+end
+
+local function meleeOf(player: Player?): WeaponId
+	local c = if player then choiceOf(player) else nil
+	return if c and player and allowed(player, "Melee", c.melee) then c.melee else Config.Loadout.Melee
 end
 
 function Loadout.standard(player: Player?): Kit
 	local primary: WeaponId, gadget: GadgetId
 	if player then
 		local c = choiceOf(player)
-		primary, gadget = c.primary, c.gadget
+		primary = if allowed(player, "Primary", c.primary) then c.primary else "AR"
+		gadget = c.gadget
 	else
 		-- Bots vary their primary and carry a med kit, which they know how to use.
 		primary = Config.Loadout.Primary[random:NextInteger(1, #Config.Loadout.Primary)]
 		gadget = "Medkit"
 	end
-	return { weapons = { primary, Config.Loadout.Sidearm, Config.Loadout.Melee }, gadget = gadget }
+	return { weapons = { primary, Config.Loadout.Sidearm, meleeOf(player) }, gadget = gadget }
 end
 
-function Loadout.suddenDeath(role: Role): Kit
-	return { weapons = { if role == "Sniper" then "Sniper" else "Knife" }, gadget = nil }
+-- Each role fights with the player's own pick when it fits: a scoped primary (A Mother's Wrath) for
+-- the sniper, their melee (Double Trouble) for the knife role.
+function Loadout.suddenDeath(role: Role, player: Player?): Kit
+	if role ~= "Sniper" then
+		return { weapons = { meleeOf(player) }, gadget = nil }
+	end
+	local c = if player then choiceOf(player) else nil
+	local own = c and player and allowed(player, "Primary", c.primary) and Config.Weapons[c.primary].scoped
+	return { weapons = { if own and c then c.primary else "Sniper" }, gadget = nil }
 end
 
 -- One team's Sudden Death roles for `count` slots, in slot order; `members[i]` is nil for a bot.
@@ -68,9 +99,12 @@ function Loadout.roles(members: { Player? }, count: number): { Role }
 end
 
 -- Sudden Death role requests are per match; a stale one must not override a teammate next time.
-function Loadout.resetRoles()
-	for player, c in choices do
-		c.role = nil
+function Loadout.resetRoles(players: { Player })
+	for _, player in players do
+		local c = choices[player]
+		if c then
+			c.role = nil
+		end
 		player:SetAttribute("PickRole", nil)
 	end
 end
@@ -81,8 +115,12 @@ function Loadout.bind()
 			return
 		end
 		local c = choiceOf(player)
-		if kind == "Primary" and table.find(Config.Loadout.Primary, value :: any) then
-			c.primary = value :: WeaponId
+		if (kind == "Primary" or kind == "Melee") and allowed(player, kind, value) then
+			if kind == "Primary" then
+				c.primary = value :: WeaponId
+			else
+				c.melee = value :: WeaponId
+			end
 		elseif kind == "Gadget" and table.find(Config.Loadout.Gadget, value :: any) then
 			c.gadget = value :: GadgetId
 		elseif kind == "Role" and (value == "Sniper" or value == "Knife") then
@@ -95,6 +133,7 @@ function Loadout.bind()
 	end)
 	Players.PlayerAdded:Connect(function(player)
 		player:SetAttribute("PickPrimary", "AR")
+		player:SetAttribute("PickMelee", Config.Loadout.Melee)
 		player:SetAttribute("PickGadget", "Frag")
 	end)
 	Players.PlayerRemoving:Connect(function(player)

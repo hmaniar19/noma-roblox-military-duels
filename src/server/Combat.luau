@@ -19,11 +19,10 @@ local HEAD_OFFSET = Config.Hitboxes[1].offset
 
 local Combat = {}
 
--- Set by Match.
-Combat.isLive = function(): boolean
-	return false
+-- A combatant can only fight while its own arena's round is live (several arenas run at once).
+function Combat.isLive(c: Combatant): boolean
+	return c.arena.isLive()
 end
-Combat.onElimination = function(_victim: Combatant, _attacker: Combatant?, _zone: Config.Zone?) end
 
 local rng = Random.new()
 local fxFolder = Instance.new("Folder")
@@ -52,7 +51,8 @@ Combat.occlusion = occlusion
 Combat.fxFolder = fxFolder
 
 function Combat.headPosition(c: Combatant): Vector3
-	return (c.root.CFrame * CFrame.new(HEAD_OFFSET)).Position
+	local offset = if c.stance == "Crouch" then Config.CrouchHitboxes[1].offset else HEAD_OFFSET
+	return (c.root.CFrame * CFrame.new(offset)).Position
 end
 
 function Combat.dropShield(c: Combatant)
@@ -60,6 +60,83 @@ function Combat.dropShield(c: Combatant)
 	local field = c.model:FindFirstChildOfClass("ForceField")
 	if field then
 		field:Destroy()
+	end
+end
+
+-- Movement speed from stance, aiming and slide. The server owns it (Server Authority predicts it).
+function Combat.applySpeed(c: Combatant)
+	if not c.alive or os.clock() < c.slideUntil then
+		return
+	end
+	c.humanoid.WalkSpeed = if c.stance == "Crouch"
+		then Config.CrouchSpeed
+		elseif c.aiming then Config.AimWalkSpeed
+		elseif c.stance == "Sprint" then Config.SprintSpeed
+		else Config.WalkSpeed
+end
+
+local standingPose: { [Motor6D]: CFrame } = setmetatable({}, { __mode = "k" }) :: any
+local LEG_BENDS: { [string]: number } = { LeftHip = 70, RightHip = 70, LeftKnee = -110, RightKnee = -110 }
+
+-- Crouching lowers the body (HipHeight) and bends hips and knees so the legs fold instead of sinking
+-- into the ground. Hit detection switches to Config.CrouchHitboxes.
+local function crouchPose(c: Combatant, crouched: boolean)
+	c.humanoid.HipHeight = if crouched then Config.CrouchHipHeight else 2
+	for name, degrees in LEG_BENDS do
+		local joint = c.model:FindFirstChild(name, true)
+		if joint and joint:IsA("Motor6D") then
+			standingPose[joint] = standingPose[joint] or joint.C0
+			joint.C0 = if crouched
+				then standingPose[joint] * CFrame.Angles(math.rad(degrees), 0, 0)
+				else standingPose[joint]
+		end
+	end
+end
+
+function Combat.setStance(c: Combatant, stance: "Stand" | "Sprint" | "Crouch")
+	if not c.alive or c.stance == stance then
+		return
+	end
+	if (stance == "Crouch") ~= (c.stance == "Crouch") then
+		crouchPose(c, stance == "Crouch")
+	end
+	c.stance = stance
+	Combat.applySpeed(c)
+	Combatants.sync(c)
+end
+
+-- Sprint + C: a burst of speed that bleeds off into a crouch.
+function Combat.slide(c: Combatant)
+	local now = os.clock()
+	if c.stance ~= "Sprint" or now - c.lastSlide < Config.SlideCooldown then
+		return
+	end
+	if c.humanoid.FloorMaterial == Enum.Material.Air then
+		return
+	end
+	c.lastSlide = now
+	Combat.setStance(c, "Crouch")
+	c.slideUntil = now + Config.SlideSeconds
+	task.spawn(function()
+		while c.alive and os.clock() < c.slideUntil do
+			local k = (c.slideUntil - os.clock()) / Config.SlideSeconds
+			c.humanoid.WalkSpeed = Config.CrouchSpeed + (Config.SlideSpeed - Config.CrouchSpeed) * k
+			task.wait(0.05)
+		end
+		Combat.applySpeed(c)
+	end)
+end
+
+-- One extra jump in mid-air, recharged on landing. The server applies the push, so it can't be spammed.
+function Combat.doubleJump(c: Combatant)
+	if not c.alive or c.doubleJumped or c.humanoid.FloorMaterial ~= Enum.Material.Air then
+		return
+	end
+	c.doubleJumped = true
+	local v = c.root.AssemblyLinearVelocity
+	c.root.AssemblyLinearVelocity = Vector3.new(v.X, Config.DoubleJumpVelocity, v.Z)
+	if c.stance == "Crouch" then
+		Combat.setStance(c, "Stand")
 	end
 end
 
@@ -73,7 +150,7 @@ function Combat.equip(c: Combatant, index: number)
 	c.reloadToken += 1 -- switching cancels a reload
 	c.reloading = false
 	c.aiming = false
-	c.humanoid.WalkSpeed = Config.WalkSpeed
+	Combat.applySpeed(c)
 	for _, child in c.model:GetChildren() do
 		if child:IsA("Tool") then
 			child:Destroy()
@@ -83,10 +160,16 @@ function Combat.equip(c: Combatant, index: number)
 	tool.Name = Config.Weapons[id].name
 	tool.CanBeDropped = false
 	tool.ManualActivationOnly = true
-	tool.Grip = CFrame.new(0, -0.1, 0.2) * CFrame.Angles(0, math.rad(180), 0)
-	Gun.build(tool, id)
+	tool.Grip = Gun.Grip
+	-- The owner's equipped skin (published by Economy); bots carry standard guns.
+	local skin = if c.player then c.player:GetAttribute("Skin_" .. id) else nil
+	local handle = Gun.build(tool, id, if typeof(skin) == "string" then skin else nil)
 	tool.Parent = c.model
 	c.humanoid:EquipTool(tool)
+	local draw = handle:FindFirstChild("Draw")
+	if draw and draw:IsA("Sound") then
+		draw:Play() -- Double Trouble's shing
+	end
 	Combatants.sync(c)
 end
 
@@ -125,6 +208,40 @@ function Combat.reload(c: Combatant)
 	end)
 end
 
+-- A Mother's Wrath elimination: a jagged blue lightning bolt strikes the target from the sky.
+local function wrathStrike(at: Vector3)
+	local points = { at + Vector3.new(0, 60, 0) }
+	for i = 1, 7 do
+		local y = 60 - i * 60 / 8
+		table.insert(points, at + Vector3.new(rng:NextNumber(-3, 3), y, rng:NextNumber(-3, 3)))
+	end
+	table.insert(points, at)
+	for i = 1, #points - 1 do
+		local a, b = points[i], points[i + 1]
+		local bolt = Instance.new("Part")
+		bolt.Anchored, bolt.CanCollide, bolt.CanQuery, bolt.CanTouch, bolt.CastShadow = true, false, false, false, false
+		bolt.Material = Enum.Material.Neon
+		bolt.Color = Color3.fromRGB(110, 180, 255)
+		bolt.Size = Vector3.new(0.5, 0.5, (b - a).Magnitude)
+		bolt.CFrame = CFrame.lookAt((a + b) / 2, b)
+		bolt.Parent = fxFolder
+		task.delay(0.5, bolt.Destroy, bolt)
+	end
+	local glow = Instance.new("Part")
+	glow.Anchored, glow.CanCollide, glow.CanQuery, glow.CanTouch = true, false, false, false
+	glow.Shape = Enum.PartType.Ball
+	glow.Material = Enum.Material.Neon
+	glow.Color = Color3.fromRGB(70, 150, 255)
+	glow.Transparency = 0.4
+	glow.Size = Vector3.new(7, 7, 7)
+	glow.Position = at
+	local light = Instance.new("PointLight")
+	light.Color, light.Brightness, light.Range = Color3.fromRGB(110, 180, 255), 8, 30
+	light.Parent = glow
+	glow.Parent = fxFolder
+	task.delay(0.5, glow.Destroy, glow)
+end
+
 function Combat.damage(target: Combatant, amount: number, attacker: Combatant, zone: Config.Zone)
 	if not target.alive or os.clock() < target.shieldUntil then
 		return
@@ -144,7 +261,10 @@ function Combat.damage(target: Combatant, amount: number, attacker: Combatant, z
 	end
 	if killed then
 		target.alive = false
-		Combat.onElimination(target, attacker, zone)
+		if Combatants.weapon(attacker) == "MothersWrath" then
+			wrathStrike(target.root.Position)
+		end
+		target.arena.onElimination(target, attacker, zone)
 	end
 end
 
@@ -176,9 +296,9 @@ local function trace(
 	local victimZone: Config.Zone? = nil
 	local victimDist = maxDist
 	for _, other in Combatants.all() do
-		if other ~= c and other.alive and other.team ~= c.team then
+		if other ~= c and other.arena == c.arena and other.alive and other.team ~= c.team then
 			local zone: Config.Zone?, dist: number? =
-				Hitbox.cast(origin, dir, maxDist, Combatants.rewound(other, rewind))
+				Hitbox.cast(origin, dir, maxDist, Combatants.rewound(other, rewind), other.stance == "Crouch")
 			if zone and dist and dist <= victimDist then
 				victim, victimZone, victimDist = other, zone :: Config.Zone, dist
 			end
@@ -191,7 +311,7 @@ end
 -- from the server's validated head position; the client's origin only locates the crosshair's target.
 function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 	local id = Combatants.weapon(c)
-	if not id or not c.alive or not Combat.isLive() or c.reloading or c.healingUntil > 0 then
+	if not id or not c.alive or not Combat.isLive(c) or c.reloading or c.healingUntil > 0 then
 		return
 	end
 	local w = Config.Weapons[id]
@@ -223,6 +343,9 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 	aimDir = aimDir.Unit
 
 	c.lastShot = now
+	if c.stance == "Sprint" then
+		Combat.setStance(c, "Stand") -- no shooting at full sprint
+	end
 	if c.shieldUntil > 0 then
 		Combat.dropShield(c)
 	end
@@ -305,8 +428,26 @@ function Combat.bind()
 			return
 		end
 		c.aiming = aiming
-		if c.alive then
-			c.humanoid.WalkSpeed = if aiming then Config.AimWalkSpeed else Config.WalkSpeed
+		if aiming and c.stance == "Sprint" then
+			Combat.setStance(c, "Stand")
+		end
+		Combat.applySpeed(c)
+	end)
+	Net.Stance.OnServerEvent:Connect(function(player, stance)
+		local c = Combatants.byPlayer(player)
+		if not c or not Net.allow(player, "Stance", 10, 5) then
+			return
+		end
+		if stance == "Slide" then
+			Combat.slide(c)
+		elseif stance == "DoubleJump" then
+			Combat.doubleJump(c)
+		elseif stance == "Stand" or stance == "Crouch" or stance == "Sprint" then
+			if not (stance == "Sprint" and c.aiming) then
+				Combat.setStance(c, stance)
+			end
+		else
+			AntiCheat.flag(c, "malformed Stance payload")
 		end
 	end)
 	Net.Look.OnServerEvent:Connect(function(player, dir)

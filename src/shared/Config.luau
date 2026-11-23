@@ -26,6 +26,7 @@ export type Weapon = {
 	spreadAim: number,
 	spreadMoving: number, -- extra degrees while moving
 	botRange: number, -- the bot closes in until it is this near
+	scoped: boolean, -- aiming looks through a scope (sniper zoom and overlay)
 }
 
 export type Zone = string -- "Head" | "Body" | "Legs" (keys of ZoneMultiplier; produced only by Hitbox.cast)
@@ -36,6 +37,7 @@ local function gun(t: { [string]: any }): Weapon
 	t.pellets = t.pellets or 1
 	t.minDamageScale = t.minDamageScale or 0.7
 	t.spreadMoving = t.spreadMoving or 1.5
+	t.scoped = t.scoped == true
 	return (t :: any) :: Weapon
 end
 
@@ -44,14 +46,21 @@ local Config = {
 	SuddenDeathAt = 4,
 	RoundSeconds = 120,
 	FreezeSeconds = 8, -- includes picking a loadout
-	LobbySeconds = 6, -- choose 1v1 or 2v2 before each match
+	QueueSeconds = 10, -- after the first player queues for a map, others have this long to join
 	RoundEndSeconds = 4,
-	MatchEndSeconds = 8,
+	MatchEndSeconds = 10, -- includes the match-win celebration
 	SpawnShieldSeconds = 3,
 
 	MaxHealth = 100,
 	WalkSpeed = 16,
 	AimWalkSpeed = 9,
+	SprintSpeed = 24, -- hold Shift
+	CrouchSpeed = 8, -- C toggles crouch
+	SlideSpeed = 34, -- C while sprinting: a burst that slows to crouch speed
+	SlideSeconds = 0.75,
+	SlideCooldown = 1.2,
+	CrouchHipHeight = 0.9, -- standing R15 HipHeight is 2; this drops the body about 1.1 studs
+	DoubleJumpVelocity = 40, -- upward speed of the mid-air second jump (a normal jump is 42)
 	JumpPower = 42,
 
 	ZoneMultiplier = {
@@ -66,6 +75,13 @@ local Config = {
 		{ zone = "Head" :: Zone, offset = Vector3.new(0, 1.95, 0), size = Vector3.new(1.25, 1.25, 1.25) },
 		{ zone = "Body" :: Zone, offset = Vector3.new(0, 0.45, 0), size = Vector3.new(2.6, 2.1, 1.2) },
 		{ zone = "Legs" :: Zone, offset = Vector3.new(0, -1.75, 0), size = Vector3.new(1.8, 2.3, 1.1) },
+	} :: { { zone: Zone, offset: Vector3, size: Vector3 } },
+
+	-- Crouched: the root is ~1.1 studs lower, so the boxes are shorter and sit lower around it.
+	CrouchHitboxes = {
+		{ zone = "Head" :: Zone, offset = Vector3.new(0, 1.5, -0.15), size = Vector3.new(1.25, 1.25, 1.25) },
+		{ zone = "Body" :: Zone, offset = Vector3.new(0, 0.35, 0), size = Vector3.new(2.6, 1.9, 1.4) },
+		{ zone = "Legs" :: Zone, offset = Vector3.new(0, -1.0, 0), size = Vector3.new(1.8, 1.4, 1.6) },
 	} :: { { zone: Zone, offset: Vector3, size: Vector3 } },
 
 	-- One table for every weapon; the server enforces all of it.
@@ -132,6 +148,7 @@ local Config = {
 		Sniper = gun({
 			name = "Sniper",
 			auto = false,
+			scoped = true,
 			damage = 90, -- head x3 is a one-shot; body is two
 			falloffStart = 1000,
 			falloffEnd = 1001,
@@ -164,9 +181,9 @@ local Config = {
 		}),
 	} :: { [WeaponId]: Weapon },
 
-	-- What the pre-round screen offers. The sidearm and the knife are always carried.
+	-- What the pre-round screen offers. The sidearm is always carried; the melee defaults to the knife.
 	Loadout = {
-		Primary = { "AR", "SMG", "Shotgun" } :: { WeaponId },
+		Primary = { "AR", "SMG", "Shotgun", "Sniper" } :: { WeaponId },
 		Sidearm = "Pistol" :: WeaponId,
 		Melee = "Knife" :: WeaponId,
 		Gadget = { "Frag", "Smoke", "Medkit" } :: { GadgetId },
@@ -176,6 +193,117 @@ local Config = {
 		Frag = { name = "Frag Grenade", fuse = 2.2, radius = 16, maxDamage = 110, minDamage = 20, throwSpeed = 75 },
 		Smoke = { name = "Smoke Grenade", fuse = 1.2, radius = 12, duration = 12, throwSpeed = 75 },
 		Medkit = { name = "Med Kit", heal = 50, channel = 3 },
+	},
+
+	-- Roblox user ids of the game's developers. They own every skin and special weapon for free
+	-- (looks only, so it gives no advantage in a duel).
+	Developers = {
+		[12015477852] = "hmania10",
+		[11238400758] = "Aar0nBu44", -- Noelle, the game's designer
+	} :: { [number]: string },
+
+	-- Coins (earned by playing only; never sold). Noelle's payout rules.
+	Payouts = {
+		WinHeadshot = 120, -- the match-winning shot was a headshot
+		WinBody = 80, -- any other win, including the opponent leaving
+		LoserPerRound = 10, -- per round the losing side won
+		BeginnersLuck = 350, -- once per account, on the very first join
+	},
+
+	-- Weapon skins bought with coins. Cosmetic only: a skin never changes a weapon's stats. `color`
+	-- is the swatch shown in the shop and inventory.
+	Skins = {
+		{ id = "Standard", name = "Standard", price = 0 },
+		{
+			id = "DesertCamo",
+			name = "Desert Camo",
+			price = 150,
+			color = Color3.fromRGB(194, 170, 120),
+			material = Enum.Material.Fabric,
+		},
+		{
+			id = "ForestCamo",
+			name = "Forest Camo",
+			price = 150,
+			color = Color3.fromRGB(74, 92, 58),
+			material = Enum.Material.Fabric,
+		},
+		{
+			id = "ArcticWhite",
+			name = "Arctic White",
+			price = 300,
+			color = Color3.fromRGB(228, 232, 236),
+			material = Enum.Material.SmoothPlastic,
+		},
+		{
+			id = "NavySteel",
+			name = "Navy Steel",
+			price = 300,
+			color = Color3.fromRGB(40, 58, 96),
+			material = Enum.Material.Metal,
+		},
+		{
+			id = "Crimson",
+			name = "Crimson",
+			price = 600,
+			color = Color3.fromRGB(150, 24, 30),
+			material = Enum.Material.SmoothPlastic,
+		},
+		{
+			id = "Midnight",
+			name = "Midnight Blue",
+			price = 600,
+			color = Color3.fromRGB(20, 28, 70),
+			material = Enum.Material.Metal,
+		},
+		{
+			id = "Gold",
+			name = "Gold",
+			price = 1000,
+			color = Color3.fromRGB(212, 170, 60),
+			material = Enum.Material.Foil,
+		},
+	} :: { { id: string, name: string, price: number, color: Color3?, material: Enum.Material? } },
+
+	-- Weapons of their own bought with coins (Shop > WEAPONS). Once owned they appear in the loadout
+	-- picker for their slot. Each copies the stats of its `base` weapon (see the copies after this
+	-- table), so owning one is never an advantage.
+	ShopWeapons = {
+		{
+			id = "DoubleTrouble",
+			name = "Double Trouble",
+			base = "Knife",
+			price = 1500,
+			slot = "Melee",
+			color = Color3.fromRGB(120, 10, 16),
+			blurb = "Twin dark katanas with glowing crimson edges, a red swing trail and a shing when drawn.",
+		},
+		{
+			id = "MothersWrath",
+			name = "A Mother's Wrath",
+			base = "Sniper",
+			price = 3000,
+			slot = "Primary",
+			color = Color3.fromRGB(16, 30, 90),
+			blurb = "Dark-blue sniper rifle with glowing blue shots and blue lightning on every elimination.",
+		},
+	} :: {
+		{
+			id: string,
+			name: string,
+			base: WeaponId,
+			price: number,
+			slot: string,
+			color: Color3,
+			blurb: string,
+		}
+	},
+
+	-- Arenas players can queue for from the Camp More Maniar lobby, in picker order.
+	Maps = {
+		{ id = "ShootingRange", name = "Shooting Range", blurb = "Firing lanes, offices and a tall control tower." },
+		{ id = "DesertOutpost", name = "Desert Outpost", blurb = "Dunes, shipping containers and a watchtower." },
+		{ id = "UrbanTown", name = "Urban Training Town", blurb = "Streets and houses built for raid practice." },
 	},
 
 	Teams = {
@@ -207,13 +335,16 @@ local Config = {
 
 	Bot = {
 		Name = "Recruit Bot",
-		ReactionTime = 0.45,
-		AimErrorDegrees = 3.2, -- grows with distance
-		HeadshotChance = 0.18,
+		ReactionTime = 0.75, -- seconds from spotting you to the first shot
+		AimErrorDegrees = 5, -- base miss cone; grows with distance. Settled: ~58% body hits at 20 studs, ~16% at 40
+		AimSettleSeconds = 1.5, -- aim starts up to twice as wide and settles over this long
+		MovingTargetPenalty = 1.6, -- extra miss cone against a running target
+		SniperAimScale = 0.55, -- the sniper aims tighter, but not perfectly
+		HeadshotChance = 0.07,
 		RetreatHealth = 35, -- below this (or while reloading) the bot falls back to hidden cover
 		HealBelow = 60, -- a bot carrying a med kit uses it in cover below this
-		BurstShots = 5,
-		BurstPause = 0.35,
+		BurstShots = 4,
+		BurstPause = 0.6,
 		Think = 0.1,
 	},
 
@@ -229,5 +360,12 @@ local Config = {
 		Explosion = "rbxasset://sounds/impact_explosion_03.mp3",
 	},
 }
+
+-- Shop weapons: their own ids, names and models, but copied stats, so "same stats" can't drift.
+for _, entry in Config.ShopWeapons do
+	local w = table.clone(Config.Weapons[entry.base])
+	w.name = entry.name
+	Config.Weapons[entry.id] = w
+end
 
 return Config

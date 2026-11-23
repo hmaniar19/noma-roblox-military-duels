@@ -1,6 +1,8 @@
 --!strict
--- Standard uniform rig: every combatant is a scale-1 blocky R15 body in team colors with helmet, vest
--- and armbands, whatever avatar they wear. Hit detection uses Config.Hitboxes, never these parts.
+-- Team uniform rig: every player keeps their own Roblox avatar (body parts, face, skin, hair and
+-- accessories) dressed in their team's military uniform: team-colored body, helmet, vest and
+-- armbands. Hats come off for the helmet; clothing comes off so the uniform shows. Body size is
+-- standard so the look matches the hitbox; hit detection uses Config.Hitboxes, never these parts.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -8,46 +10,47 @@ local Config = require(ReplicatedStorage.Shared.Config)
 
 local Rig = {}
 
-local ACCESSORY_FIELDS = {
-	"HatAccessory",
-	"HairAccessory",
-	"FaceAccessory",
-	"NeckAccessory",
-	"ShouldersAccessory",
-	"FrontAccessory",
-	"BackAccessory",
-	"WaistAccessory",
+-- Layered accessories that are clothing; they would cover the uniform.
+local CLOTHING = {
+	[Enum.AccessoryType.TShirt] = true,
+	[Enum.AccessoryType.Shirt] = true,
+	[Enum.AccessoryType.Pants] = true,
+	[Enum.AccessoryType.Jacket] = true,
+	[Enum.AccessoryType.Sweater] = true,
+	[Enum.AccessoryType.Shorts] = true,
+	[Enum.AccessoryType.DressSkirt] = true,
 }
-local BODY_FIELDS = { "Torso", "LeftArm", "RightArm", "LeftLeg", "RightLeg", "Head" }
 
 local descriptions: { [number]: HumanoidDescription } = {}
 
--- The player's own face and skin tone on a standard blocky body: no packages, no scaling, no accessories.
+-- The avatar at standard size, without hats (the helmet takes their place) or clothing.
 local function normalized(source: HumanoidDescription?): HumanoidDescription
 	local desc = if source then source:Clone() else Instance.new("HumanoidDescription")
 	desc.HeightScale, desc.WidthScale, desc.DepthScale, desc.HeadScale = 1, 1, 1, 1
 	desc.BodyTypeScale, desc.ProportionScale = 0, 0
-	for _, field in BODY_FIELDS do
-		(desc :: any)[field] = 0
-	end
-	for _, field in ACCESSORY_FIELDS do
-		(desc :: any)[field] = ""
-	end
+	desc.HatAccessory = ""
 	pcall(function()
-		desc:SetAccessories({}, true)
+		local keep = {}
+		for _, accessory in desc:GetAccessories(true) do
+			if accessory.AccessoryType ~= Enum.AccessoryType.Hat and not CLOTHING[accessory.AccessoryType] then
+				table.insert(keep, accessory)
+			end
+		end
+		desc:SetAccessories(keep, true)
 	end)
 	desc.Shirt, desc.Pants, desc.GraphicTShirt = 0, 0, 0
 	return desc
 end
 
-local function playerDescription(player: Player): HumanoidDescription
-	local cached = descriptions[player.UserId]
+-- Anyone's avatar by user id (players, and the friends bots dress up as), cached for the session.
+local function avatarDescription(userId: number): HumanoidDescription
+	local cached = descriptions[userId]
 	if cached then
 		return cached
 	end
-	local ok, desc = pcall(Players.GetHumanoidDescriptionFromUserId, Players, math.max(player.UserId, 1))
+	local ok, desc = pcall(Players.GetHumanoidDescriptionFromUserId, Players, math.max(userId, 1))
 	local result = normalized(if ok then desc else nil)
-	descriptions[player.UserId] = result
+	descriptions[userId] = result
 	return result
 end
 
@@ -111,10 +114,13 @@ end
 
 -- Spawns the player's standardized, team-colored character at `cf`. Yields; returns nil if they left.
 function Rig.spawnPlayer(player: Player, team: Config.TeamId, cf: CFrame): Model?
-	local desc = teamDescription(playerDescription(player), team)
+	local desc = teamDescription(avatarDescription(player.UserId), team)
 	if not player:IsDescendantOf(Players) then
 		return nil
 	end
+	-- Stream the destination to their client before the character exists: a new character starts at
+	-- the default spawn point, so the move below must follow the load with no wait in between.
+	pcall(player.RequestStreamAroundAsync, player, cf.Position)
 	player:LoadCharacterWithHumanoidDescriptionAsync(desc)
 	local model = player.Character
 	if not model or not player:IsDescendantOf(Players) then
@@ -125,9 +131,16 @@ function Rig.spawnPlayer(player: Player, team: Config.TeamId, cf: CFrame): Model
 	return model
 end
 
-function Rig.spawnBot(team: Config.TeamId, name: string, cf: CFrame, parent: Instance): Model
-	local base = normalized(nil)
-	base.HeadColor = Color3.fromRGB(204, 142, 105)
+-- A bot in team uniform. With `userId` it wears that user's avatar (a player's friend); otherwise a
+-- standard blocky recruit.
+function Rig.spawnBot(team: Config.TeamId, name: string, cf: CFrame, parent: Instance, userId: number?): Model
+	local base: HumanoidDescription
+	if userId then
+		base = avatarDescription(userId)
+	else
+		base = normalized(nil)
+		base.HeadColor = Color3.fromRGB(204, 142, 105)
+	end
 	local model = Players:CreateHumanoidModelFromDescription(teamDescription(base, team), Enum.HumanoidRigType.R15)
 	model.Name = name
 	local regen = model:FindFirstChild("Health")
