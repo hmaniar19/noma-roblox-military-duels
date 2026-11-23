@@ -228,6 +228,11 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			-- They left while their character loaded: a bot takes the slot instead.
 			if model then
 				model:Destroy()
+				-- If they conceded mid-load, this was their only character: send them back again
+				-- (toLobby's newest call wins).
+				if player.Parent and player:GetAttribute("Arena") == nil then
+					task.spawn(toLobby, player)
+				end
 			end
 			player, name, model = nil, entry.name, nil
 			pcall(function()
@@ -778,6 +783,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 					local out = table.remove(queue, i) :: Player
 					modeOf[out] = nil
 					out:SetAttribute("Queued", nil)
+					out:SetAttribute("QueuedMode", nil)
 					Net.Toast:FireClient(out, "Bot Bootcamp", "Queue again to play your bootcamp match.")
 				end
 			end
@@ -802,6 +808,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				table.remove(queue, table.find(queue, player) :: number)
 				modeOf[player] = nil
 				player:SetAttribute("Queued", nil)
+				player:SetAttribute("QueuedMode", nil)
 				player:SetAttribute("Arena", id)
 				table.insert(humans, player)
 				local ranked = player:GetAttribute("Ranked") == true and not perfectBots
@@ -855,6 +862,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			modeOf[player] = if mode == "2v2" then "2v2" else "1v1"
 			table.insert(queue, player)
 			player:SetAttribute("Queued", id)
+			player:SetAttribute("QueuedMode", modeOf[player])
 			setQueued()
 		end,
 		leave = function(player)
@@ -863,6 +871,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			if i then
 				table.remove(queue, i)
 				player:SetAttribute("Queued", nil)
+				player:SetAttribute("QueuedMode", nil)
 				setQueued()
 			end
 			local entry = inRoster(player)

@@ -237,7 +237,8 @@ end
 -- The server drops aim on equip and round start; while the button is still held, aim again.
 local aimHeld = false
 local function resyncAim()
-	if aimHeld and Weapon.inCombat() then
+	local _, w = Weapon.current()
+	if aimHeld and Weapon.inCombat() and w and w.kind ~= "melee" then
 		Weapon.aiming = true
 		Aim:FireServer(true)
 	end

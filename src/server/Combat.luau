@@ -490,14 +490,16 @@ function Combat.bind()
 	end)
 	Net.Aim.OnServerEvent:Connect(function(player, aiming)
 		local c = Combatants.byPlayer(player)
-		if not c or not Net.allow(player, "Aim", 10, 5) or not Combat.isLive(c) then
+		-- Accepted during Freeze too: a held aim is resent at round start, before the round goes Live.
+		if not c or not Net.allow(player, "Aim", 10, 5) or not c.alive then
 			return
 		end
 		if typeof(aiming) ~= "boolean" then
 			AntiCheat.flag(c, "malformed Aim payload")
 			return
 		end
-		c.aiming = aiming
+		local id = Combatants.weapon(c)
+		c.aiming = aiming and id ~= nil and Config.Weapons[id].kind ~= "melee"
 		if aiming and c.stance == "Sprint" then
 			Combat.setStance(c, "Stand")
 		end

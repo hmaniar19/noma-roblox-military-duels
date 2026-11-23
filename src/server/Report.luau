@@ -88,7 +88,7 @@ local function submit(player: Player, target: number?): boolean
 	-- The last completed round; while one is still in progress, the round before it (or, in the first
 	-- round of a match, the one in progress).
 	local log = newest[player]
-	if log and not log.done and previous[player] then
+	if log and not log.done and previous[player] and previous[player].match == log.match then
 		log = previous[player]
 	end
 	if not log then

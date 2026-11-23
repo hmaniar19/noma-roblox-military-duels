@@ -582,8 +582,13 @@ RunService.RenderStepped:Connect(function()
 	if queued then
 		local a = arenas:FindFirstChild(queued)
 		local mapName = a and a:GetAttribute("Name") or queued
-		local mode = a and a:GetAttribute("Mode") or selectedMode
-		local phase = a and a:GetAttribute("Phase")
+		local mode = player:GetAttribute("QueuedMode") or selectedMode
+		-- The match starting there may be the other mode; then this player waits for the next one.
+		local phase = if a
+				and a:GetAttribute("Mode") ~= mode
+				and a:GetAttribute("Phase") == "Starting"
+			then "Busy"
+			else a and a:GetAttribute("Phase")
 		status.Text = if phase == "Starting"
 			then `Queued for {mapName} ({mode}) · starting {clock((a :: Instance):GetAttribute("StartsAt"), now)}`
 			elseif phase == "Waiting" then `Queued for {mapName} ({mode})`

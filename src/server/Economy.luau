@@ -386,7 +386,9 @@ function Economy.matchResult(player: Player, won: boolean, clean: boolean)
 	else
 		p.losses += 1
 	end
-	if p.bootcamp then
+	-- An unread profile on a live server is held in Bootcamp for the whole visit (see load).
+	local verified = loaded[player] or not okStore or RunService:IsStudio()
+	if p.bootcamp and verified then
 		p.cleanStreak = if clean then p.cleanStreak + 1 else 0
 		if p.cleanStreak >= Config.BootcampCleanMatches then
 			p.bootcamp, p.cleanStreak = false, 0
