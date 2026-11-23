@@ -10,6 +10,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local Gun = require(ReplicatedStorage.Shared.Gun)
+local Profile = require(ReplicatedStorage.Shared.Profile)
 
 local player = Players.LocalPlayer :: Player
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
@@ -31,6 +32,8 @@ local LOOK_INTERVAL = 2 / Config.AntiCheat.LookRate
 local Weapon = {}
 Weapon.aiming = false
 Weapon.menuOpen = false -- set by Menu; keeps the cursor visible while a picker is open
+Weapon.cutscene = false -- set by Cutscene; the first-person gun hides while one plays
+Weapon.scoped = false -- looking through a sniper scope this frame; Hud draws the overlay
 
 local firing = false
 local aimBlend = 0
@@ -61,10 +64,10 @@ local fxFolder = Instance.new("Folder")
 fxFolder.Name = "LocalFx"
 fxFolder.Parent = workspace
 
-local function sound(id: string, parent: Instance, volume: number)
+local function sound(id: string, parent: Instance, volume: number, speed: number?)
 	local s = Instance.new("Sound")
 	s.SoundId = id
-	s.Volume = volume
+	s.Volume, s.PlaybackSpeed = volume, speed or 1
 	s.Parent = parent
 	s:Play()
 	s.Ended:Once(function()
@@ -83,12 +86,36 @@ function Weapon.current(): (Config.WeaponId?, Config.Weapon?)
 	return id, if id then Config.Weapons[id] else nil
 end
 
--- Fighting right now: on a team, alive, and not on the match-win celebration stage.
+-- The shot cue for a weapon's class: shotgun, sniper, automatic rifle or semi-automatic pistol.
+local function shotCue(w: Config.Weapon?): { id: string, speed: number }
+	local cues = Config.Sounds
+	if not w then
+		return cues.ShotRifle
+	end
+	return if w.pellets > 1
+		then cues.ShotShotgun
+		elseif w.scoped then cues.ShotSniper
+		elseif w.auto then cues.ShotRifle
+		else cues.ShotPistol
+end
+
+local function weaponNamed(name: string): Config.Weapon?
+	for _, w in Config.Weapons do
+		if w.name == name then
+			return w
+		end
+	end
+	return nil
+end
+
+-- Fighting right now: on a team, alive, not on the match-win celebration stage, and not watching a
+-- cutscene.
 function Weapon.inCombat(): boolean
 	local character = player.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	local onStage = player:GetAttribute("Celebrating") == true
-	return player:GetAttribute("Team") ~= nil and not onStage and humanoid ~= nil and humanoid.Health > 0
+	local fighting = player:GetAttribute("Team") ~= nil and not onStage and not Weapon.cutscene
+	return fighting and humanoid ~= nil and humanoid.Health > 0
 end
 
 -- Rebuilds the first-person model when the weapon in hand changes.
@@ -99,8 +126,7 @@ local function refreshViewmodel(id: Config.WeaponId)
 	viewmodel:Destroy()
 	viewmodel = Instance.new("Model")
 	viewmodel.Name = "Viewmodel"
-	local skin = player:GetAttribute("Skin_" .. id)
-	local handle = Gun.build(viewmodel, id, if typeof(skin) == "string" then skin else nil)
+	local handle = Gun.build(viewmodel, id, Profile.skin(player, id))
 	viewmodel.PrimaryPart = handle
 	viewmodel:ScaleTo(0.42)
 	-- Cosmetic only: anchored, or gravity builds velocity between PivotTo calls until the parts are destroyed.
@@ -208,6 +234,16 @@ local function setAiming(on: boolean)
 	end
 end
 
+-- The server drops aim on equip and round start; while the button is still held, aim again.
+local aimHeld = false
+local function resyncAim()
+	local _, w = Weapon.current()
+	if aimHeld and Weapon.inCombat() and w and w.kind ~= "melee" then
+		Weapon.aiming = true
+		Aim:FireServer(true)
+	end
+end
+
 -- Shows a blade's swing trail (Double Trouble) for the length of one swing.
 local function flashTrail(handle: Instance?)
 	local trail = handle and handle:FindFirstChild("SwingTrail")
@@ -249,7 +285,8 @@ local function tryFire()
 	else
 		recoil = math.min(recoil + (if w.pellets > 1 or not w.auto then 1 else 0.35), 1.6)
 		flash.Brightness = 4
-		sound(Config.Sounds.Shot, camera, 0.5)
+		local cue = shotCue(w)
+		sound(cue.id, camera, 0.5, cue.speed)
 	end
 end
 
@@ -301,10 +338,13 @@ Banner.OnClientEvent:Connect(function(kind: string)
 		local camera = workspace.CurrentCamera
 		camera.CFrame = CFrame.lookAt(camera.CFrame.Position, camera.CFrame.Position + root.CFrame.LookVector)
 	end
+	if kind == "RoundStart" then
+		resyncAim()
+	end
 end)
 
 ShotFx.OnClientEvent:Connect(
-	function(shooter: Model, origin: Vector3, hitPos: Vector3, hitWall: boolean, melee: boolean)
+	function(shooter: Model, origin: Vector3, hitPos: Vector3, hitWall: boolean, melee: boolean, cue: boolean)
 		local tool = shooter and shooter:FindFirstChildOfClass("Tool")
 		local handle = tool and tool:FindFirstChild("Handle")
 		if shooter == player.Character then
@@ -313,8 +353,13 @@ ShotFx.OnClientEvent:Connect(
 			end
 			return
 		end
-		if handle then
-			sound(if melee then Config.Sounds.Slash else Config.Sounds.Shot, handle, 0.8)
+		if handle and tool then
+			if cue and melee then
+				sound(Config.Sounds.Slash, handle, 0.8)
+			elseif cue then
+				local c = shotCue(weaponNamed(tool.Name))
+				sound(c.id, handle, 0.8, c.speed)
+			end
 			if melee then
 				flashTrail(handle)
 			end
@@ -342,33 +387,61 @@ end
 
 local KEY_SLOTS = { [Enum.KeyCode.One] = 1, [Enum.KeyCode.Two] = 2, [Enum.KeyCode.Three] = 3 }
 
+local function cycleSlot(step: number?)
+	local index, count = slotIndex()
+	if count > 1 then
+		equipSlot((index - 1 + (step or 1)) % count + 1)
+	end
+end
+
+local function throwGadget()
+	if Weapon.inCombat() and (player:GetAttribute("GadgetLeft") or 0) > 0 then
+		Gadget:FireServer(workspace.CurrentCamera.CFrame.LookVector)
+	end
+end
+
+local function reload()
+	local id, w = Weapon.current()
+	if Weapon.inCombat() and id and w and w.kind == "gun" and (player:GetAttribute("Ammo") or 0) < w.magazine then
+		Reload:FireServer()
+	end
+end
+
+-- Crouch while sprinting slides; otherwise it toggles crouch.
+local function crouch()
+	if Weapon.inCombat() then
+		local stance = player:GetAttribute("Stance")
+		Stance:FireServer(if stance == "Sprint" then "Slide" elseif stance == "Crouch" then "Stand" else "Crouch")
+	end
+end
+
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then
 		return
 	end
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+	local key = input.KeyCode
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or key == Enum.KeyCode.ButtonR2 then
 		firing = true
 		tryFire()
-	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+	elseif input.UserInputType == Enum.UserInputType.MouseButton2 or key == Enum.KeyCode.ButtonL2 then
+		aimHeld = true
 		setAiming(true)
-	elseif KEY_SLOTS[input.KeyCode] then
-		equipSlot(KEY_SLOTS[input.KeyCode])
-	elseif input.KeyCode == Enum.KeyCode.G or input.KeyCode == Enum.KeyCode.Four then
-		if Weapon.inCombat() and (player:GetAttribute("GadgetLeft") or 0) > 0 then
-			Gadget:FireServer(workspace.CurrentCamera.CFrame.LookVector)
-		end
-	elseif input.KeyCode == Enum.KeyCode.R then
-		local id, w = Weapon.current()
-		if Weapon.inCombat() and id and w and w.kind == "gun" and (player:GetAttribute("Ammo") or 0) < w.magazine then
-			Reload:FireServer()
-		end
-	elseif input.KeyCode == Enum.KeyCode.LeftShift and Weapon.inCombat() then
+	elseif KEY_SLOTS[key] then
+		equipSlot(KEY_SLOTS[key])
+	elseif key == Enum.KeyCode.ButtonY then
+		cycleSlot()
+	elseif key == Enum.KeyCode.G or key == Enum.KeyCode.Four or key == Enum.KeyCode.DPadUp then
+		throwGadget()
+	elseif key == Enum.KeyCode.R or key == Enum.KeyCode.ButtonX then
+		reload()
+	elseif key == Enum.KeyCode.LeftShift and Weapon.inCombat() then
 		Stance:FireServer("Sprint")
-	elseif input.KeyCode == Enum.KeyCode.C and Weapon.inCombat() then
-		-- C while sprinting slides; otherwise it toggles crouch.
-		local stance = player:GetAttribute("Stance")
-		Stance:FireServer(if stance == "Sprint" then "Slide" elseif stance == "Crouch" then "Stand" else "Crouch")
-	elseif input.KeyCode == Enum.KeyCode.Space and Weapon.inCombat() then
+	elseif key == Enum.KeyCode.ButtonL3 and Weapon.inCombat() then
+		-- No stick-click hold on a gamepad, so L3 toggles sprint instead of holding it.
+		Stance:FireServer(if player:GetAttribute("Stance") == "Sprint" then "Stand" else "Sprint")
+	elseif key == Enum.KeyCode.C or key == Enum.KeyCode.ButtonB then
+		crouch()
+	elseif key == Enum.KeyCode.Space and Weapon.inCombat() then
 		-- A second press in mid-air is the double jump (the server allows one per landing).
 		local humanoid = (player.Character :: Model):FindFirstChildOfClass("Humanoid")
 		if humanoid and humanoid.FloorMaterial == Enum.Material.Air then
@@ -380,22 +453,61 @@ end)
 
 UserInputService.InputChanged:Connect(function(input, processed)
 	if not processed and input.UserInputType == Enum.UserInputType.MouseWheel then
-		local index, count = slotIndex()
-		if count > 1 then
-			equipSlot((index - 1 + (if input.Position.Z < 0 then 1 else -1)) % count + 1)
-		end
+		cycleSlot(if input.Position.Z < 0 then 1 else -1)
 	end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.ButtonR2 then
 		firing = false
-	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+	elseif input.UserInputType == Enum.UserInputType.MouseButton2 or input.KeyCode == Enum.KeyCode.ButtonL2 then
+		aimHeld = false
 		setAiming(false)
 	elseif input.KeyCode == Enum.KeyCode.LeftShift and player:GetAttribute("Stance") == "Sprint" then
 		Stance:FireServer("Stand")
 	end
 end)
+
+-- Touch combat buttons, clear of the default jump button (bottom-right, up to ~210px tall).
+local touchGui = if UserInputService.TouchEnabled then Instance.new("ScreenGui") else nil
+if touchGui then
+	touchGui.Name, touchGui.ResetOnSpawn, touchGui.Enabled = "TouchCombat", false, false
+	local function button(text: string, x: number, y: number, size: number): TextButton
+		local b = Instance.new("TextButton")
+		b.AnchorPoint, b.Position, b.Size = Vector2.new(1, 1), UDim2.new(1, x, 1, y), UDim2.fromOffset(size, size)
+		b.BackgroundColor3, b.BackgroundTransparency = Color3.new(0, 0, 0), 0.45
+		b.Text, b.TextColor3, b.Font, b.TextScaled = text, Color3.new(1, 1, 1), Enum.Font.GothamBold, true
+		b.Parent = touchGui
+		return b
+	end
+	local fireTouch: InputObject? = nil
+	button("FIRE", -190, -30, 90).InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch then
+			fireTouch = input
+			firing = true
+			tryFire()
+		end
+	end)
+	-- Global TouchEnded: the finger may slide off the button before lifting.
+	UserInputService.TouchEnded:Connect(function(input)
+		if input == fireTouch then
+			firing = false
+		end
+	end)
+	local function toggleAim()
+		aimHeld = not aimHeld
+		setAiming(aimHeld)
+	end
+	local labels = { "AIM", "RELOAD", "SWAP", "GADGET", "CROUCH" }
+	local actions: { () -> () } = { toggleAim, reload, cycleSlot, throwGadget, crouch }
+	for i, label in labels do
+		-- Wrapped: Activated passes an InputObject, which cycleSlot would take as its step.
+		button(label, -20 - (i - 1) * 64, -230, 56).Activated:Connect(function()
+			actions[i]()
+		end)
+	end
+	touchGui.Parent = player:WaitForChild("PlayerGui")
+end
 
 player:GetAttributeChangedSignal("Reloading"):Connect(function()
 	if player:GetAttribute("Reloading") then
@@ -445,8 +557,14 @@ end
 
 local nextFollowCheck = 0
 RunService.RenderStepped:Connect(function(dt: number)
+	Weapon.scoped = false
 	local camera = workspace.CurrentCamera
-	if not Weapon.inCombat() then
+	local fighting = Weapon.inCombat()
+	if touchGui and touchGui.Enabled ~= fighting then
+		touchGui.Enabled = fighting
+		aimHeld = false -- AIM is a toggle on touch; every life starts unaimed
+	end
+	if not fighting then
 		viewmodel.Parent = nil
 		vmId = nil -- rebuild next match, so a skin equipped in the lobby shows
 		firing = false
@@ -466,6 +584,8 @@ RunService.RenderStepped:Connect(function(dt: number)
 	end
 	if id ~= vmId then
 		refreshViewmodel(id)
+		aimBlend = 0 -- a new weapon starts unaimed, so a sniper never flashes its scope on the swap
+		resyncAim()
 	end
 	UserInputService.MouseIconEnabled = Weapon.menuOpen
 	hideTool()
@@ -478,7 +598,7 @@ RunService.RenderStepped:Connect(function(dt: number)
 		Look:FireServer(camera.CFrame.LookVector)
 	end
 
-	local scoped = w.scoped and aimBlend > 0.9
+	Weapon.scoped = w.scoped and Weapon.aiming and aimBlend > 0.9
 	local reloading = player:GetAttribute("Reloading") == true
 	local healing = player:GetAttribute("Healing") == true
 	aimBlend += ((if Weapon.aiming and w.kind == "gun" and not reloading then 1 else 0) - aimBlend) * math.min(
@@ -506,7 +626,9 @@ RunService.RenderStepped:Connect(function(dt: number)
 		0.5 * sprintBlend,
 		0.2 * sprintBlend
 	)
-	viewmodel.Parent = if scoped then nil else camera
+	-- A scripted camera (the drop-in ride cam) is a third-person shot: no first-person gun.
+	local hidden = Weapon.scoped or camera.CameraType == Enum.CameraType.Scriptable
+	viewmodel.Parent = if hidden then nil else camera
 	viewmodel:PivotTo(camera.CFrame * offset * kick * stab * pose * dip)
 	if viewmodel.PrimaryPart then
 		animateParts(viewmodel.PrimaryPart, id, t, now - lastFire)

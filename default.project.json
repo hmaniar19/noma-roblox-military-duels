@@ -42,7 +42,7 @@
       "Terrain": {
         "$properties": {
           "Decoration": true,
-          "GrassLength": 1
+          "GrassLength": 0.7
         }
       }
     },
@@ -55,6 +55,11 @@
     "Players": {
       "$properties": {
         "CharacterAutoLoads": false
+      }
+    },
+    "ReplicatedFirst": {
+      "Dedication": {
+        "$path": "src/first"
       }
     }
   }

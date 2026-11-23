@@ -7,6 +7,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Profile = require(ReplicatedStorage.Shared.Profile)
 local Net = require(script.Parent.Net)
 
 type WeaponId = Config.WeaponId
@@ -34,7 +35,7 @@ local function choiceOf(player: Player): Choice
 end
 
 -- True if `id` may go in `slot` for this player: a standard option, or a shop weapon for that slot
--- that the server has recorded as owned (Economy publishes "Owns_<id>").
+-- that the server has recorded as owned (Economy publishes ownership; Shared.Profile reads it).
 local function allowed(player: Player, slot: string, id: string): boolean
 	if
 		slot == "Primary" and table.find(Config.Loadout.Primary, id)
@@ -44,7 +45,7 @@ local function allowed(player: Player, slot: string, id: string): boolean
 	end
 	for _, w in Config.ShopWeapons do
 		if w.id == id and w.slot == slot then
-			return player:GetAttribute("Owns_" .. id) == true
+			return Profile.owns(player, id)
 		end
 	end
 	return false
@@ -109,27 +110,44 @@ function Loadout.resetRoles(players: { Player })
 	end
 end
 
+-- Records one validated pick ("Primary", "Melee", "Gadget" or "Role"); false if it isn't allowed.
+function Loadout.choose(player: Player, kind: string, value: string): boolean
+	local c = choiceOf(player)
+	if (kind == "Primary" or kind == "Melee") and allowed(player, kind, value) then
+		if kind == "Primary" then
+			c.primary = value :: WeaponId
+		else
+			c.melee = value :: WeaponId
+		end
+	elseif kind == "Gadget" and table.find(Config.Loadout.Gadget, value :: any) then
+		c.gadget = value :: GadgetId
+	elseif kind == "Role" and (value == "Sniper" or value == "Knife") then
+		c.role = value :: Role
+	else
+		return false
+	end
+	player:SetAttribute("Pick" .. kind, value)
+	return true
+end
+
 function Loadout.bind()
 	Net.Loadout.OnServerEvent:Connect(function(player, kind, value)
-		if not Net.allow(player, "Loadout", 6, 4) or typeof(value) ~= "string" then
+		-- Malformed payloads are dropped, not flagged: AntiCheat requires Economy, which requires Loadout.
+		if not Net.allow(player, "Loadout", 6, 4) or typeof(value) ~= "string" or typeof(kind) ~= "string" then
 			return
 		end
-		local c = choiceOf(player)
-		if (kind == "Primary" or kind == "Melee") and allowed(player, kind, value) then
-			if kind == "Primary" then
-				c.primary = value :: WeaponId
-			else
-				c.melee = value :: WeaponId
+		local arena = player:GetAttribute("Arena")
+		if arena ~= nil and arena ~= "Practice" then
+			local states = ReplicatedStorage:FindFirstChild("Arenas")
+			local state = states and states:FindFirstChild(tostring(arena))
+			local phase = state and state:GetAttribute("Phase")
+			if phase ~= "Freeze" and phase ~= "Starting" then
+				return
 			end
-		elseif kind == "Gadget" and table.find(Config.Loadout.Gadget, value :: any) then
-			c.gadget = value :: GadgetId
-		elseif kind == "Role" and (value == "Sniper" or value == "Knife") then
-			c.role = value :: Role
-		else
-			return
 		end
-		player:SetAttribute("Pick" .. kind, value)
-		Loadout.onChange(player)
+		if Loadout.choose(player, kind, value) then
+			Loadout.onChange(player)
+		end
 	end)
 	Players.PlayerAdded:Connect(function(player)
 		player:SetAttribute("PickPrimary", "AR")

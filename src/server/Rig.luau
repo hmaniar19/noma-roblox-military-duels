@@ -123,7 +123,7 @@ function Rig.spawnPlayer(player: Player, team: Config.TeamId, cf: CFrame): Model
 	pcall(player.RequestStreamAroundAsync, player, cf.Position)
 	player:LoadCharacterWithHumanoidDescriptionAsync(desc)
 	local model = player.Character
-	if not model or not player:IsDescendantOf(Players) then
+	if not model or not model:FindFirstChild("HumanoidRootPart") or not player:IsDescendantOf(Players) then
 		return nil
 	end
 	model:PivotTo(cf)
@@ -156,5 +156,81 @@ end
 Players.PlayerRemoving:Connect(function(player)
 	descriptions[player.UserId] = nil
 end)
+
+-- Roblox's default R15 animations by name (emotes add their ids), for the celebration, cutscene and
+-- lobby stand-ins.
+local ANIMATIONS: { [string]: string } = {
+	cheer = "rbxassetid://507770677",
+	dance = "rbxassetid://507771019",
+	point = "rbxassetid://507770453",
+	hold = "rbxassetid://507768375",
+	run = "rbxassetid://913376220",
+}
+
+-- Loaded tracks per animator, so replays never pile up LoadAnimation tracks (the limit is 256).
+local tracks: { [Animator]: { [string]: AnimationTrack } } = setmetatable({}, { __mode = "k" }) :: any
+
+function Rig.animate(model: Model, name: string, looped: boolean): AnimationTrack?
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return nil
+	end
+	local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		local created = Instance.new("Animator")
+		created.Parent = humanoid
+		animator = created
+	end
+	assert(animator, "animator")
+	local id = ANIMATIONS[name]
+	if not id then
+		return nil
+	end
+	local cache = tracks[animator] or {}
+	tracks[animator] = cache
+	local track = cache[id]
+	if not track then
+		local anim = Instance.new("Animation")
+		anim.AnimationId = id
+		local ok, loaded = pcall(animator.LoadAnimation, animator, anim)
+		if not ok or not loaded then
+			return nil
+		end
+		track = loaded
+		cache[id] = loaded
+	end
+	assert(track, "track")
+	track.Priority = Enum.AnimationPriority.Action
+	track.Looped = looped
+	track:Play(0.2)
+	return track
+end
+
+-- Plays an emote from Config.Emotes: an animation id, or "pose:salute", built from code: the right
+-- hand raised to the brow for two seconds with a gold glint.
+function Rig.emote(model: Model, anim: string)
+	if anim ~= "pose:salute" then
+		ANIMATIONS[anim] = anim
+		Rig.animate(model, anim, false)
+		return
+	end
+	local arm = model:FindFirstChild("RightUpperArm")
+	local joint = arm and arm:FindFirstChild("RightShoulder")
+	local hand = model:FindFirstChild("RightHand")
+	if not joint or not joint:IsA("Motor6D") or model:GetAttribute("Saluting") then
+		return
+	end
+	model:SetAttribute("Saluting", true)
+	local rest = joint.C0
+	joint.C0 = rest * CFrame.Angles(math.rad(150), math.rad(-35), math.rad(40))
+	local glint = Instance.new("Sparkles")
+	glint.SparkleColor = Color3.fromRGB(235, 190, 60)
+	glint.Parent = hand
+	task.delay(2, function()
+		joint.C0 = rest
+		glint:Destroy()
+		model:SetAttribute("Saluting", nil)
+	end)
+end
 
 return Rig

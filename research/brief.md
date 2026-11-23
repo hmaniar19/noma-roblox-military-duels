@@ -11,7 +11,7 @@ Present-day military FPS duels on Roblox: 1v1 and 2v2, realistic look, intense b
 3. **4–4 = Sudden Death.** Normal loadouts are replaced:
    - 2v2: one player per team gets a **sniper**, the teammate gets a **combat knife**. The team chooses who gets which during the drop-in.
    - 1v1: each player picks sniper or knife.
-   - The sniper exists **only** in Sudden Death.
+   - Owner decision (2026-11-21): the sniper is also a normal primary for everyone; Sudden Death still forces one sniper and one knife per team.
 4. Teams **swap sides every round**.
 5. **3-second spawn shield** after landing. It drops early if you fire.
 6. **Leaving mid-match counts as a loss.**
@@ -42,14 +42,15 @@ Every map has:
 ## 4. Weapons
 Loadout = **1 primary + 1 sidearm + 1 melee + 1 gadget**. You re-pick it **every round**.
 
-- **Primaries:** Assault rifle (all-rounder), SMG (fast, close range), Shotgun (one-shot up close, useless at range).
-- **Sudden Death only:** Sniper, combat knife.
+- **Primaries:** Assault rifle (all-rounder), SMG (fast, close range), Shotgun (one-shot up close, useless at range), Sniper (owner decision 2026-11-21: available to everyone).
+- **Sudden Death:** one sniper and one combat knife per team.
 - **Gadgets:** Smoke grenade, Frag grenade, Med kit (+50 HP, 3 s channel, can't shoot while using it).
 - **Starter pick:** on first join, choose your **starter weapon and its base color**.
 
 Unlockables are **cosmetic only**. They have the same stats as the weapon they replace.
-- **Double Trouble (Level 100):** twin dark-red swords with a glow, a red swing trail, and a *shing* when drawn. A melee option.
-- **A Mother's Wrath (Level 300):** a dark-blue rifle that fires glowing blue shots, with its own blue-lightning cutscene on every elimination. Stats match the assault rifle.
+- **Double Trouble (Level 100, or buy with coins):** twin dark-red swords (styled as dark katanas) with a glow, a red swing trail, and a *shing* when drawn. A melee option with the combat knife's stats.
+- **A Mother's Wrath (Level 300, or buy with coins):** owner decision 2026-11-21: a dark-blue **sniper** that fires glowing blue shots, with a blue-lightning strike on every elimination. Stats match the sniper.
+- Owner decisions (2026-11-21): the developers (`Config.Developers`) own every shop item; bots wear the avatars and names of the players' Roblox friends; a match win ends with a celebration stage.
 
 ## 5. Characters and hitboxes
 1. Players use **their own Roblox avatar inside a standard team uniform** (helmet and vest). Everyone gets the same body size and the **same hitbox**, so tiny or skinny avatars give no advantage.

@@ -45,9 +45,10 @@ local Config = {
 	RoundsToWin = 5,
 	SuddenDeathAt = 4,
 	RoundSeconds = 120,
-	FreezeSeconds = 8, -- includes picking a loadout
+	FreezeSeconds = 10, -- the drop-in ride; the loadout is picked during it
 	QueueSeconds = 10, -- after the first player queues for a map, others have this long to join
-	RoundEndSeconds = 4,
+	RoundEndSeconds = 4, -- when no cutscene could be staged
+	CutsceneGraceSeconds = 3, -- how long past a cutscene's length the server waits for slow clients
 	MatchEndSeconds = 10, -- includes the match-win celebration
 	SpawnShieldSeconds = 3,
 
@@ -101,7 +102,7 @@ local Config = {
 		}),
 		SMG = gun({
 			name = "SMG",
-			damage = 19,
+			damage = 21, -- 5 body shots: kills faster than the AR up close (0.26 s vs 0.30 s)
 			falloffStart = 25,
 			falloffEnd = 70,
 			minDamageScale = 0.45,
@@ -195,12 +196,99 @@ local Config = {
 		Medkit = { name = "Med Kit", heal = 50, channel = 3 },
 	},
 
+	-- HUD color themes, picked on first join and changed later in Settings. `primary` colors the panels,
+	-- `accent` the highlights and gold text. The first one is the default.
+	HudThemes = {
+		{
+			id = "NavyGold",
+			name = "Navy & Gold",
+			primary = Color3.fromRGB(16, 24, 48),
+			accent = Color3.fromRGB(235, 190, 60),
+		},
+		{
+			id = "CrimsonSilver",
+			name = "Crimson & Silver",
+			primary = Color3.fromRGB(64, 14, 20),
+			accent = Color3.fromRGB(214, 218, 226),
+		},
+		{
+			id = "ForestSand",
+			name = "Forest & Sand",
+			primary = Color3.fromRGB(26, 40, 24),
+			accent = Color3.fromRGB(220, 196, 146),
+		},
+		{
+			id = "MidnightCyan",
+			name = "Midnight & Cyan",
+			primary = Color3.fromRGB(10, 14, 32),
+			accent = Color3.fromRGB(70, 214, 234),
+		},
+		{
+			id = "PurplePink",
+			name = "Purple & Pink",
+			primary = Color3.fromRGB(42, 20, 64),
+			accent = Color3.fromRGB(250, 128, 196),
+		},
+		{
+			id = "BlackOrange",
+			name = "Black & Orange",
+			primary = Color3.fromRGB(16, 16, 18),
+			accent = Color3.fromRGB(250, 146, 44),
+		},
+	} :: { { id: string, name: string, primary: Color3, accent: Color3 } },
+
 	-- Roblox user ids of the game's developers. They own every skin and special weapon for free
 	-- (looks only, so it gives no advantage in a duel).
 	Developers = {
 		[12015477852] = "hmania10",
 		[11238400758] = "Aar0nBu44", -- Noelle, the game's designer
 	} :: { [number]: string },
+
+	-- XP and levels. A typical match (finish + some eliminations, a win half the time) is ~160 XP and
+	-- lasts ~6 minutes; level 100 needs ~29,700 XP, about 185 matches or ~18 hours: about 1.5 hours a
+	-- day for 2 weeks, or 1 hour a day for 3 weeks.
+	Xp = {
+		Finish = 50, -- for playing a match to the end
+		Win = 100,
+		Elimination = 20,
+		Base = 100, -- XP from level L to L+1 is Base + PerLevel * L
+		PerLevel = 4,
+	},
+	-- Level rewards. Unlocks are cosmetic or modes only; weapons keep the stats of their base weapon.
+	Unlocks = {
+		{ level = 50, kind = "Mode", id = "Ranked", name = "Ranked mode" },
+		{ level = 100, kind = "Item", id = "DoubleTrouble", name = "Double Trouble" },
+		{ level = 200, kind = "Title", id = "EddiesHonor", name = "Eddie's Honor title + gold salute" },
+		{ level = 300, kind = "Item", id = "MothersWrath", name = "A Mother's Wrath" },
+	} :: { { level: number, kind: string, id: string, name: string } },
+	RankedStart = 1000, -- Rank Points for a new ranked player; a win moves 25 points from loser to winner
+	RankedSwing = 25,
+	BootcampCleanMatches = 3, -- clean (zero-flag) matches in a row that end Bot Bootcamp
+
+	-- Finisher inks (Shop > FINISHERS): the ink color of your round-win anime finisher's slashes and splatter.
+	Finishers = {
+		{ id = "Crimson", name = "Crimson Ink", price = 0, ink = Color3.fromRGB(200, 20, 30) },
+		{ id = "Midnight", name = "Midnight Ink", price = 250, ink = Color3.fromRGB(40, 40, 120) },
+		{ id = "Gold", name = "Golden Ink", price = 500, ink = Color3.fromRGB(235, 190, 60) },
+		{ id = "Sakura", name = "Sakura Ink", price = 500, ink = Color3.fromRGB(250, 140, 190) },
+		{ id = "Thunder", name = "Thunder Ink", price = 800, ink = Color3.fromRGB(70, 170, 255) },
+	} :: { { id: string, name: string, price: number, ink: Color3 } },
+
+	-- Free emotes for everyone: Roblox's default animations, or a pose built from code ("pose:").
+	-- The gold salute needs the Eddie's Honor title.
+	Emotes = {
+		{ id = "Wave", name = "Wave", anim = "rbxassetid://507770239" },
+		{ id = "Cheer", name = "Cheer", anim = "rbxassetid://507770677" },
+		{ id = "Dance", name = "Dance", anim = "rbxassetid://507771019" },
+		{ id = "Point", name = "Point", anim = "rbxassetid://507770453" },
+		{ id = "Salute", name = "Gold Salute", anim = "pose:salute", title = "EddiesHonor" },
+	} :: { { id: string, name: string, anim: string, title: string? } },
+
+	-- First-join starter pick: a primary and its base color (a free starter skin for that weapon).
+	Starter = {
+		Weapons = { "AR", "SMG", "Shotgun", "Sniper" },
+		Colors = { "DesertCamo", "ForestCamo", "ArcticWhite", "NavySteel" },
+	},
 
 	-- Coins (earned by playing only; never sold). Noelle's payout rules.
 	Payouts = {
@@ -329,14 +417,31 @@ local Config = {
 		LookRate = 30, -- max look updates per second (client sends about half that)
 		MaxShotsPerSecond = 16, -- remote-level spam cap; per-weapon cadence is enforced in Combat.fire
 		MaxRewind = 0.35, -- seconds of lag compensation
-		MaxYawAngle = 60, -- degrees between shot yaw and the server-simulated body facing (fast flicks lag it)
+		-- Degrees between shot yaw and the server-simulated body facing at any moment in the lag window
+		-- (the window absorbs fast flicks, so this only covers the body trailing the camera).
+		MaxYawAngle = 45,
 		CheckInterval = 0.25,
+		-- Each flag adds a suspicion score by reason (matched by prefix; FlagDefaultWeight otherwise).
+		-- The score drains steadily, so lag blips never add up; reaching the threshold means Bot Bootcamp.
+		FlagThreshold = 15,
+		FlagDecayPerMinute = 4,
+		FlagDefaultWeight = 1,
+		FlagWeights = {
+			["out of bounds"] = 3,
+			["shot direction does not match look direction"] = 1,
+			["shot origin"] = 2,
+			["Fire remote spam"] = 2,
+			["malformed"] = 5,
+		} :: { [string]: number },
 	},
 
 	Bot = {
 		Name = "Recruit Bot",
 		ReactionTime = 0.75, -- seconds from spotting you to the first shot
-		AimErrorDegrees = 5, -- base miss cone; grows with distance. Settled: ~58% body hits at 20 studs, ~16% at 40
+		PerfectReactionTime = 0.2, -- Bot Bootcamp bots: no aim error, no burst pause
+		AimMissStuds = 1.6, -- base lateral miss at the target, x(1 + distance / AimMissRange), capped
+		AimMissRange = 60,
+		AimMissCap = 2.4, -- settled: ~45% body hits from 20 to 80 studs with the rifle
 		AimSettleSeconds = 1.5, -- aim starts up to twice as wide and settles over this long
 		MovingTargetPenalty = 1.6, -- extra miss cone against a running target
 		SniperAimScale = 0.55, -- the sniper aims tighter, but not perfectly
@@ -349,7 +454,11 @@ local Config = {
 	},
 
 	Sounds = {
-		Shot = "rbxassetid://2781019930",
+		-- Per-class shot cues: one Roblox-owned id, told apart by playback speed.
+		ShotPistol = { id = "rbxassetid://2781019930", speed = 1.25 },
+		ShotRifle = { id = "rbxassetid://2781019930", speed = 1 },
+		ShotShotgun = { id = "rbxassetid://2781019930", speed = 0.7 },
+		ShotSniper = { id = "rbxassetid://2781019930", speed = 0.55 },
 		Hit = "rbxassetid://12222046",
 		Headshot = "rbxassetid://12221990",
 		Reload = "rbxassetid://12221976",

@@ -21,37 +21,6 @@ export type Member = {
 
 local Celebration = {}
 
-local EMOTES = {
-	cheer = "rbxassetid://507770677",
-	dance = "rbxassetid://507771019",
-	point = "rbxassetid://507770453",
-	hold = "rbxassetid://507768375",
-}
-
-local function play(model: Model, emote: string, looped: boolean): AnimationTrack?
-	local humanoid = model:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		return nil
-	end
-	local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-	if not animator then
-		local created = Instance.new("Animator")
-		created.Parent = humanoid
-		animator = created
-	end
-	assert(animator, "animator")
-	local anim = Instance.new("Animation")
-	anim.AnimationId = EMOTES[emote]
-	local ok, track = pcall(animator.LoadAnimation, animator, anim)
-	if not ok or not track then
-		return nil
-	end
-	track.Priority = Enum.AnimationPriority.Action
-	track.Looped = looped
-	track:Play(0.2)
-	return track
-end
-
 local function part(folder: Instance, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?): Part
 	local p = Instance.new("Part")
 	p.Anchored, p.Size, p.CFrame, p.Color = true, size, cf, color
@@ -98,8 +67,14 @@ local function firework(folder: Instance, from: Vector3, color: Color3)
 	local apex = from + Vector3.new(math.random(-6, 6), math.random(22, 30), math.random(-4, 4))
 	local steps = 20
 	for i = 1, steps do
+		if not shell.Parent then
+			return
+		end
 		shell.Position = from:Lerp(apex, i / steps)
 		task.wait(0.03)
+	end
+	if not shell.Parent then
+		return
 	end
 	shell.Transparency = 1
 	local burst = Instance.new("ParticleEmitter")
@@ -147,6 +122,7 @@ function Celebration.play(
 		table.insert(if m.team == winner then winners else losers, m)
 	end
 
+	local finished = false
 	local function spawn(m: Member, cf: CFrame): Model?
 		local model: Model? = nil
 		pcall(function()
@@ -158,6 +134,13 @@ function Celebration.play(
 				model = Rig.spawnBot(m.team, m.name, cf, botsFolder, m.userId)
 			end
 		end)
+		if finished then
+			-- The celebration ended during the spawn: a bot is ours to remove; a player is left alone.
+			if model and not m.player then
+				model:Destroy()
+			end
+			return nil
+		end
 		if model then
 			(model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") :: BasePart).Anchored = true
 		end
@@ -173,16 +156,19 @@ function Celebration.play(
 			if not model then
 				return
 			end
-			play(model, "cheer", false)
+			Rig.animate(model, "cheer", false)
 			task.wait(1.6)
-			local dance = play(model, "dance", true)
+			local dance = Rig.animate(model, "dance", true)
 			task.wait(2.4)
+			if finished then
+				return
+			end
 			if dance then
 				dance:Stop(0.3)
 			end
 			equip(model, m.primary)
-			play(model, "hold", true)
-			play(model, "point", false)
+			Rig.animate(model, "hold", true)
+			Rig.animate(model, "point", false)
 		end)
 	end
 	for i, m in losers do
@@ -242,6 +228,7 @@ function Celebration.play(
 	return stage.Position + Vector3.new(0, 3, 0),
 		function()
 			running = false
+			finished = true
 			for _, m in members do
 				if m.player then
 					m.player:SetAttribute("Celebrating", nil)

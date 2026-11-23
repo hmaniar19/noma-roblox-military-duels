@@ -7,6 +7,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Theme = require(script.Parent.Theme)
 local Weapon = require(script.Parent.Weapon)
 
 local player = Players.LocalPlayer :: Player
@@ -15,6 +16,7 @@ local state = require(script.Parent.ArenaState)
 local HitConfirm = remotes:WaitForChild("HitConfirm") :: RemoteEvent
 local Damaged = remotes:WaitForChild("Damaged") :: RemoteEvent
 local Banner = remotes:WaitForChild("Banner") :: RemoteEvent
+local ReportRemote = remotes:WaitForChild("Report") :: RemoteEvent
 
 local FONT = Enum.Font.GothamBlack
 local NAVY = Config.Teams.Navy
@@ -119,6 +121,41 @@ round(healthFill, 6)
 local healthText = text(healthBack, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Vector2.zero, 18)
 local teamLabel = text(gui, UDim2.fromOffset(300, 22), UDim2.new(0, 24, 1, -58), Vector2.new(0, 1), 16)
 teamLabel.TextXAlignment = Enum.TextXAlignment.Left
+-- REPORT (above the team label): in a match and for a minute after it, hidden for a minute once sent.
+local function button(parent: Instance, position: UDim2, label: string, onClick: () -> ()): TextButton
+	local b = Instance.new("TextButton")
+	b.Size, b.Position, b.AnchorPoint = UDim2.fromOffset(80, 24), position, Vector2.new(0, 1)
+	b.BackgroundColor3, b.BackgroundTransparency, b.BorderSizePixel = Color3.fromRGB(12, 16, 24), 0.25, 0
+	b.Font, b.TextSize, b.TextColor3, b.Text = FONT, 13, Color3.new(1, 1, 1), label
+	b.Modal = parent ~= gui -- the confirm frees the first-person mouse while it is up
+	b.Parent = parent
+	round(b, 6)
+	b.Activated:Connect(onClick)
+	return b
+end
+local confirmBox =
+	frame(UDim2.fromOffset(184, 72), UDim2.new(0, 24, 1, -112), Vector2.new(0, 1), Color3.fromRGB(12, 16, 24), 0.25)
+round(confirmBox, 8)
+confirmBox.Visible = false
+local question = text(confirmBox, UDim2.new(1, -16, 0, 32), UDim2.fromOffset(8, 4), Vector2.zero, 13)
+question.Text, question.TextWrapped = "Report the last round for review?", true
+local reportUntil, sentUntil, wasInMatch = 0, 0, false
+local foes: { [number]: boolean } = {} -- human opponents in the current or last match
+local reportButton = button(gui, UDim2.new(0, 24, 1, -84), "REPORT", function()
+	confirmBox.Visible = true
+end)
+button(confirmBox, UDim2.new(0, 8, 1, -8), "REPORT", function()
+	local first = next(foes)
+	ReportRemote:FireServer(if first and next(foes, first) == nil then first else nil)
+	-- Hidden while the server answers; a dropped (rate-limited) request shows the button again soon.
+	confirmBox.Visible, sentUntil = false, os.clock() + 10
+end)
+ReportRemote.OnClientEvent:Connect(function(ok: boolean)
+	sentUntil = if ok then os.clock() + 60 else 0
+end)
+button(confirmBox, UDim2.new(0, 96, 1, -8), "CANCEL", function()
+	confirmBox.Visible = false
+end)
 local ammoText = text(gui, UDim2.fromOffset(240, 50), UDim2.new(1, -24, 1, -40), Vector2.new(1, 1), 40)
 ammoText.TextXAlignment = Enum.TextXAlignment.Right
 local hint = text(
@@ -193,6 +230,27 @@ local shield = text(
 )
 shield.Text = "SPAWN SHIELD (firing drops it)"
 
+-- Sniper scope: black mask around a round clear view, thin crosshairs and a red dot.
+local BLACK, RED = Color3.new(), Color3.fromRGB(235, 40, 40)
+local scope = frame(UDim2.fromScale(0.9, 0.9), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), BLACK, 1)
+scope.SizeConstraint = Enum.SizeConstraint.RelativeYY
+scope.ZIndex = 0 -- under the health, ammo and banners
+local scopeCorner = Instance.new("UICorner")
+scopeCorner.CornerRadius = UDim.new(0.5, 0)
+scopeCorner.Parent = scope
+-- The ring's stroke fills the square's corners outside the circle; its width follows the screen size.
+local ring = Instance.new("UIStroke")
+ring.Color = BLACK
+ring.Parent = scope
+frame(UDim2.fromScale(5, 5), UDim2.fromScale(0, 0.5), Vector2.new(1, 0.5), BLACK, 0, scope)
+frame(UDim2.fromScale(5, 5), UDim2.fromScale(1, 0.5), Vector2.new(0, 0.5), BLACK, 0, scope)
+frame(UDim2.fromScale(1, 5), UDim2.fromScale(0.5, 0), Vector2.new(0.5, 1), BLACK, 0, scope)
+frame(UDim2.fromScale(1, 5), UDim2.fromScale(0.5, 1), Vector2.new(0.5, 0), BLACK, 0, scope)
+frame(UDim2.new(1, 0, 0, 1), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), BLACK, 0, scope)
+frame(UDim2.new(0, 1, 1, 0), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), BLACK, 0, scope)
+local dot = frame(UDim2.fromOffset(6, 6), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), RED, 0, scope)
+round(dot, 3)
+
 -- Big center banner
 local bannerTitle = text(gui, UDim2.fromOffset(800, 90), UDim2.fromScale(0.5, 0.28), Vector2.new(0.5, 0.5), 72)
 local bannerSub = text(gui, UDim2.fromOffset(800, 40), UDim2.fromScale(0.5, 0.36), Vector2.new(0.5, 0.5), 24)
@@ -210,37 +268,43 @@ end
 
 local WIN = Color3.fromRGB(110, 220, 120)
 local LOSE = Color3.fromRGB(235, 70, 60)
-local GOLD = Color3.fromRGB(235, 190, 60)
+local GOLD = Config.HudThemes[1].accent
+local DROP_NAMES: { [string]: string } = {
+	Helicopter = "helicopter fast-rope",
+	Truck = "army truck",
+	Parachute = "parachute jump",
+	ArmoredCar = "armored car",
+}
+
+-- The player's HUD theme: panel backgrounds take its primary color, gold text its accent.
+Theme.watch(function(t)
+	GOLD = t.accent
+	board.BackgroundColor3, healthBack.BackgroundColor3 = t.primary, t.primary
+	roundLabel.TextColor3 = t.accent
+end)
 
 Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 	local team = myTeam()
 	if kind == "RoundStart" then
 		local mySide = if team == "Navy" then data.navySide elseif data.navySide == "A" then "B" else "A"
-		local sub = if team then `You start on SIDE {mySide}` else ""
+		local ride = DROP_NAMES[data.drop] or "drop-in"
+		local sub = if team then `Arriving by {ride} · you start on SIDE {mySide}` else ""
 		if data.sudden then
 			showBanner("SUDDEN DEATH", "4 - 4. Win this round to take the match.", LOSE, Config.FreezeSeconds)
 		else
 			showBanner(`ROUND {data.round}`, sub, Color3.new(1, 1, 1), Config.FreezeSeconds)
 		end
 	elseif kind == "RoundEnd" then
+		-- With a cutscene coming, the result only flashes; the cutscene shows the rest.
+		local seconds = if data.cutscene then 1.2 else Config.RoundEndSeconds
 		if data.winner == "Draw" then
-			showBanner("DRAW", `{data.detail}. No point.`, GOLD, Config.RoundEndSeconds)
+			showBanner("DRAW", `{data.detail}. No point.`, GOLD, seconds)
 		elseif team then
 			local won = data.winner == team
-			showBanner(
-				if won then "ROUND WON" else "ROUND LOST",
-				data.detail,
-				if won then WIN else LOSE,
-				Config.RoundEndSeconds
-			)
+			showBanner(if won then "ROUND WON" else "ROUND LOST", data.detail, if won then WIN else LOSE, seconds)
 			Weapon.sound(if won then Config.Sounds.Victory else Config.Sounds.Whoosh, gui, 0.6)
 		else
-			showBanner(
-				`{Config.Teams[data.winner :: Config.TeamId].name} WINS THE ROUND`,
-				data.detail,
-				GOLD,
-				Config.RoundEndSeconds
-			)
+			showBanner(`{Config.Teams[data.winner :: Config.TeamId].name} WINS THE ROUND`, data.detail, GOLD, seconds)
 		end
 	elseif kind == "MatchEnd" then
 		local score = `{data.navy} - {data.grey}`
@@ -276,7 +340,7 @@ Banner.OnClientEvent:Connect(function(kind: string, data: { [string]: any })
 	end
 end)
 
-local hitSerial = 0
+local hitSerial, headshotSerial = 0, 0
 HitConfirm.OnClientEvent:Connect(function(zone: Config.Zone, killed: boolean)
 	hitSerial += 1
 	local serial = hitSerial
@@ -293,12 +357,14 @@ HitConfirm.OnClientEvent:Connect(function(zone: Config.Zone, killed: boolean)
 	end)
 	if zone == "Head" then
 		Weapon.sound(Config.Sounds.Headshot, gui, 0.7)
+		headshotSerial += 1
+		local flash = headshotSerial
 		headshot.Visible = true
 		headshot.TextTransparency = 0
 		headshot.TextSize = 60
 		TweenService:Create(headshot, TweenInfo.new(0.6), { TextTransparency = 1, TextSize = 46 }):Play()
 		task.delay(0.6, function()
-			headshot.Visible = headshot.Visible and serial ~= hitSerial
+			headshot.Visible = headshot.Visible and flash ~= headshotSerial
 		end)
 	else
 		Weapon.sound(Config.Sounds.Hit, gui, 0.4)
@@ -317,7 +383,8 @@ end
 
 RunService.RenderStepped:Connect(function()
 	local phase = state:GetAttribute("Phase")
-	board.Visible = phase ~= nil -- only while in a match; the lobby bar replaces it at Camp More Maniar
+	-- Only while in a match; the lobby bar replaces it at Camp More Maniar, and the range has no score.
+	board.Visible = phase ~= nil and player:GetAttribute("Arena") ~= "Practice"
 	local now = workspace:GetServerTimeNow()
 	navyName.Text = state:GetAttribute("NavyName") or "NAVY"
 	greyName.Text = state:GetAttribute("GreyName") or "GREY"
@@ -336,8 +403,9 @@ RunService.RenderStepped:Connect(function()
 
 	local team = myTeam()
 	local combat = Weapon.inCombat()
-	healthBack.Visible, ammoText.Visible, hint.Visible, cross.Visible = combat, combat, combat, combat
-	slotsLabel.Visible = combat
+	healthBack.Visible, ammoText.Visible, hint.Visible, slotsLabel.Visible = combat, combat, combat, combat
+	cross.Visible, scope.Visible = combat and not Weapon.scoped, combat and Weapon.scoped
+	ring.Thickness = scope.AbsoluteSize.X * 0.25
 	if team then
 		teamLabel.Text = `YOU: {Config.Teams[team].name}`
 		teamLabel.TextColor3 = Config.Teams[team].hud
@@ -390,6 +458,23 @@ RunService.RenderStepped:Connect(function()
 	shield.Visible = combat and (healing or player:GetAttribute("Shielded") == true)
 	local showing = os.clock() < bannerUntil
 	bannerTitle.Visible, bannerSub.Visible = showing, showing
+	local arena = player:GetAttribute("Arena")
+	local inMatch = arena ~= nil and arena ~= "Practice"
+	if inMatch then
+		reportUntil = os.clock() + 60
+		if not wasInMatch then
+			table.clear(foes)
+		end
+		for _, other in Players:GetPlayers() do
+			local theirs = other:GetAttribute("Team")
+			if team and theirs and theirs ~= team and other:GetAttribute("Arena") == arena then
+				foes[other.UserId] = true
+			end
+		end
+	end
+	wasInMatch = inMatch
+	reportButton.Visible = os.clock() < reportUntil and os.clock() > sentUntil
+	confirmBox.Visible = confirmBox.Visible and reportButton.Visible
 end)
 
 return {}

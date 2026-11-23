@@ -37,11 +37,12 @@ local function arenaFolder(id: string): Folder
 end
 
 -- True if the segment from `a` to `b` passes through an active smoke cloud.
-function Gadgets.smokeBlocks(a: Vector3, b: Vector3): boolean
+-- `arena` (an arena id) limits the check to that arena's clouds.
+function Gadgets.smokeBlocks(a: Vector3, b: Vector3, arena: string?): boolean
 	local now = os.clock()
 	local d = b - a
 	for _, cloud in clouds do
-		if now < cloud.ends then
+		if now < cloud.ends and (arena == nil or cloud.arena == arena) then
 			local t = math.clamp((cloud.center - a):Dot(d) / math.max(d:Dot(d), 1e-6), 0, 1)
 			if (a + d * t - cloud.center).Magnitude < cloud.radius then
 				return true
@@ -156,13 +157,19 @@ function Gadgets.use(c: Combatant, dir: Vector3)
 		c.reloadToken += 1 -- healing cancels a reload; you can't shoot while it runs
 		c.reloading = false
 		c.healingUntil = os.clock() + G.Medkit.channel
-		local ends = c.healingUntil
-		task.delay(G.Medkit.channel, function()
-			if c.alive and c.healingUntil == ends then
-				c.healingUntil = 0
-				c.humanoid.Health = math.min(c.humanoid.MaxHealth, c.humanoid.Health + G.Medkit.heal)
-				Combatants.sync(c)
+		local ends, humanoid = c.healingUntil, c.humanoid
+		-- Heals in server-timed ticks; damage, death or the round ending stop it and keep what was gained.
+		task.spawn(function()
+			local ticks = math.max(1, math.round(G.Medkit.channel / 0.25))
+			for _ = 1, ticks do
+				task.wait(G.Medkit.channel / ticks)
+				if not (c.alive and c.healingUntil == ends and c.humanoid == humanoid and Combat.isLive(c)) then
+					return
+				end
+				humanoid.Health = math.min(humanoid.MaxHealth, humanoid.Health + G.Medkit.heal / ticks)
 			end
+			c.healingUntil = 0
+			Combatants.sync(c)
 		end)
 	else
 		if c.shieldUntil > 0 then

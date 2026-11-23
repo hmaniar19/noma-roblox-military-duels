@@ -7,6 +7,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Profile = require(ReplicatedStorage.Shared.Profile)
+local Theme = require(script.Parent.Theme)
 local Weapon = require(script.Parent.Weapon)
 
 local player = Players.LocalPlayer :: Player
@@ -16,7 +18,7 @@ local LoadoutRemote = remotes:WaitForChild("Loadout") :: RemoteEvent
 
 local FONT = Enum.Font.GothamBlack
 local IDLE = Color3.fromRGB(28, 34, 46)
-local PICKED = Color3.fromRGB(235, 190, 60)
+local PICKED = Config.HudThemes[1].accent -- follows the HUD theme (Theme.watch below)
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "DuelMenu"
@@ -43,6 +45,32 @@ local function panel(title: string, y: number): (Frame, TextLabel)
 	local pad = Instance.new("UIPadding")
 	pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 12), UDim.new(0, 12)
 	pad.Parent = f
+	-- Small windows scale the panel down; it hangs from `y`, so its height must fit in the room below.
+	local fit = Instance.new("UIScale")
+	fit.Parent = f
+	local function refit()
+		local camera = workspace.CurrentCamera
+		if camera and f.AbsoluteSize.Y > 0 then
+			local viewport, height = camera.ViewportSize, f.AbsoluteSize.Y / fit.Scale
+			local scale = math.min(1, (viewport.X - 40) / 940, (viewport.Y * (1 - y) - 20) / height)
+			-- A threshold, so the AbsoluteSize change this causes doesn't refit again on rounding noise.
+			if math.abs(scale - fit.Scale) > 0.01 then
+				fit.Scale = math.max(scale, 0.3)
+			end
+		end
+	end
+	local viewportConn: RBXScriptConnection?
+	local function watchCamera()
+		if viewportConn then
+			viewportConn:Disconnect()
+		end
+		local camera = workspace.CurrentCamera
+		viewportConn = camera and camera:GetPropertyChangedSignal("ViewportSize"):Connect(refit)
+		refit()
+	end
+	workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(watchCamera)
+	f:GetPropertyChangedSignal("AbsoluteSize"):Connect(refit) -- rows show and hide (Sudden Death)
+	watchCamera()
 	local heading = Instance.new("TextLabel")
 	heading.Size = UDim2.fromOffset(920, 30)
 	heading.BackgroundTransparency = 1
@@ -122,6 +150,10 @@ local function options(slot: string, standard: { string }): { string }
 end
 
 local loadoutPanel, loadoutTitle = panel("CHOOSE YOUR LOADOUT", 0.52)
+Theme.watch(function(t)
+	PICKED = t.accent
+	loadoutPanel.BackgroundColor3 = t.primary
+end)
 local primaryRow = row(loadoutPanel, 1, "PRIMARY", options("Primary", Config.Loadout.Primary), weaponNames, function(v)
 	LoadoutRemote:FireServer("Primary", v)
 end)
@@ -151,7 +183,7 @@ local function showOwned(buttons: Row, order: { string }): number
 		local isShop = Config.Weapons[id] ~= nil
 			and table.find(Config.Loadout.Primary, id) == nil
 			and id ~= Config.Loadout.Melee
-		b.Visible = not isShop or player:GetAttribute("Owns_" .. id) == true
+		b.Visible = not isShop or Profile.owns(player, id)
 		if b.Visible then
 			b.Position = UDim2.fromOffset(120 + shown * 160, 2)
 			shown += 1

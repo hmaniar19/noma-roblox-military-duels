@@ -10,7 +10,9 @@ local Combatants = require(script.Parent.Combatants)
 local Config = require(ReplicatedStorage.Shared.Config)
 local Gun = require(ReplicatedStorage.Shared.Gun)
 local Hitbox = require(ReplicatedStorage.Shared.Hitbox)
+local Profile = require(ReplicatedStorage.Shared.Profile)
 local Net = require(script.Parent.Net)
+local Report = require(script.Parent.Report)
 
 type Combatant = Combatants.Combatant
 
@@ -50,9 +52,12 @@ end
 Combat.occlusion = occlusion
 Combat.fxFolder = fxFolder
 
+local function headAt(cf: CFrame, crouched: boolean): Vector3
+	return (cf * CFrame.new(if crouched then Config.CrouchHitboxes[1].offset else HEAD_OFFSET)).Position
+end
+
 function Combat.headPosition(c: Combatant): Vector3
-	local offset = if c.stance == "Crouch" then Config.CrouchHitboxes[1].offset else HEAD_OFFSET
-	return (c.root.CFrame * CFrame.new(offset)).Position
+	return headAt(c.root.CFrame, c.stance == "Crouch")
 end
 
 function Combat.dropShield(c: Combatant)
@@ -149,7 +154,8 @@ function Combat.equip(c: Combatant, index: number)
 	c.equipped = index
 	c.reloadToken += 1 -- switching cancels a reload
 	c.reloading = false
-	c.aiming = false
+	-- Aim survives a swap to another aimable weapon; the client resends Aim if its state differs.
+	c.aiming = c.aiming and Config.Weapons[id].kind ~= "melee"
 	Combat.applySpeed(c)
 	for _, child in c.model:GetChildren() do
 		if child:IsA("Tool") then
@@ -162,8 +168,8 @@ function Combat.equip(c: Combatant, index: number)
 	tool.ManualActivationOnly = true
 	tool.Grip = Gun.Grip
 	-- The owner's equipped skin (published by Economy); bots carry standard guns.
-	local skin = if c.player then c.player:GetAttribute("Skin_" .. id) else nil
-	local handle = Gun.build(tool, id, if typeof(skin) == "string" then skin else nil)
+	local skin = if c.player then Profile.skin(c.player, id) else nil
+	local handle = Gun.build(tool, id, skin)
 	tool.Parent = c.model
 	c.humanoid:EquipTool(tool)
 	local draw = handle:FindFirstChild("Draw")
@@ -188,7 +194,7 @@ end
 
 function Combat.reload(c: Combatant)
 	local id = Combatants.weapon(c)
-	if not id or not c.alive or c.reloading then
+	if not id or not c.alive or c.reloading or c.healingUntil > 0 then
 		return
 	end
 	local w = Config.Weapons[id]
@@ -242,9 +248,18 @@ local function wrathStrike(at: Vector3)
 	task.delay(0.5, glow.Destroy, glow)
 end
 
-function Combat.damage(target: Combatant, amount: number, attacker: Combatant, zone: Config.Zone)
+-- Returns nil if the hit was blocked, else whether it killed. `quiet` skips the hit/hurt
+-- notifications so a multi-pellet shot can send one of each.
+function Combat.damage(
+	target: Combatant,
+	amount: number,
+	attacker: Combatant,
+	zone: Config.Zone,
+	weapon: string?,
+	quiet: boolean?
+): boolean?
 	if not target.alive or os.clock() < target.shieldUntil then
-		return
+		return nil
 	end
 	local humanoid = target.humanoid
 	humanoid.Health = math.max(0, humanoid.Health - amount)
@@ -253,28 +268,45 @@ function Combat.damage(target: Combatant, amount: number, attacker: Combatant, z
 		target.healingUntil = 0 -- taking damage interrupts a med kit
 		Combatants.sync(target)
 	end
-	if attacker.player and attacker ~= target then
-		Net.HitConfirm:FireClient(attacker.player, zone, killed)
-	end
-	if target.player then
-		Net.Damaged:FireClient(target.player, attacker.root.Position, amount)
-	end
 	if killed then
 		target.alive = false
-		if Combatants.weapon(attacker) == "MothersWrath" then
+		if weapon == "MothersWrath" then
 			wrathStrike(target.root.Position)
 		end
-		target.arena.onElimination(target, attacker, zone)
+		target.arena.onElimination(target, attacker, zone, weapon)
+	end
+	if not quiet then
+		Combat.notify(attacker, target, zone, killed, amount)
+	end
+	return killed
+end
+
+function Combat.notify(attacker: Combatant, target: Combatant, zone: Config.Zone?, killed: boolean, amount: number)
+	local hitBy, hurt = attacker.player, target.player
+	if zone and hitBy and attacker ~= target and hitBy.Parent ~= nil then
+		pcall(Net.HitConfirm.FireClient, Net.HitConfirm, hitBy, zone, killed)
+	end
+	if hurt and hurt.Parent ~= nil then
+		pcall(Net.Damaged.FireClient, Net.Damaged, hurt, attacker.root.Position, amount)
 	end
 end
 
+local ORIGIN_SAMPLES: { number } = { 0.1, 0.2, 0.35 }
+local MAX_SPEED = math.max(Config.SprintSpeed, Config.SlideSpeed) * 1.25
+
 -- Validates a shot claim from a player. Returns the reason it was rejected, or nil.
 -- Call after AntiCheat.validate so the root (and so the head) is a position the server accepted.
+-- The client fired from where it was up to a ping ago, so the origin is compared with the nearest of
+-- the current and recently rewound heads, plus what its current speed covers in that window.
 local function rejectClaim(c: Combatant, origin: Vector3, dir: Vector3): string?
-	local head = Combat.headPosition(c)
 	local player = c.player :: Player
-	local slack = AC.MaxOriginOffset + Config.WalkSpeed * math.min(player:GetNetworkPing(), AC.MaxRewind)
-	local offset = (origin - head).Magnitude
+	local speed = math.min(c.root.AssemblyLinearVelocity.Magnitude, MAX_SPEED)
+	local slack = AC.MaxOriginOffset + speed * math.min(player:GetNetworkPing(), AC.MaxRewind)
+	local offset = (origin - Combat.headPosition(c)).Magnitude
+	for _, t in ORIGIN_SAMPLES do
+		local cf, crouched = Combatants.rewound(c, math.min(t, AC.MaxRewind))
+		offset = math.min(offset, (origin - headAt(cf, crouched)).Magnitude)
+	end
 	if offset > slack then
 		return `shot origin {math.floor(offset)} studs from validated head`
 	end
@@ -297,8 +329,8 @@ local function trace(
 	local victimDist = maxDist
 	for _, other in Combatants.all() do
 		if other ~= c and other.arena == c.arena and other.alive and other.team ~= c.team then
-			local zone: Config.Zone?, dist: number? =
-				Hitbox.cast(origin, dir, maxDist, Combatants.rewound(other, rewind), other.stance == "Crouch")
+			local cf, crouched = Combatants.rewound(other, rewind)
+			local zone: Config.Zone?, dist: number? = Hitbox.cast(origin, dir, maxDist, cf, crouched)
 			if zone and dist and dist <= victimDist then
 				victim, victimZone, victimDist = other, zone :: Config.Zone, dist
 			end
@@ -326,10 +358,16 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 		return
 	end
 	if c.player then
-		AntiCheat.validate(c)
+		if AntiCheat.validate(c) then
+			return -- fired from a position the server just corrected
+		end
 		local reason = rejectClaim(c, origin, aimDir)
-		if reason then
+		if reason == "shot direction does not match look direction" then
+			AntiCheat.flagAim(c, aimDir, reason)
+		elseif reason then
 			AntiCheat.flag(c, reason)
+		end
+		if reason then
 			return
 		end
 		-- Aim at what's under the crosshair, then shoot it from the server's eye so the small
@@ -337,7 +375,11 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 		local sight = workspace:Raycast(origin, aimDir * w.range, occlusion())
 		local aimPoint = if sight then sight.Position else origin + aimDir * w.range
 		local fromEye = aimPoint - Combat.headPosition(c)
-		aimDir = if fromEye.Magnitude > 0.5 then fromEye else aimDir
+		-- The re-aimed ray may only correct camera/eye parallax (a few degrees), never steer the shot:
+		-- otherwise a spoofed origin could bend an aim-checked direction toward a target.
+		if fromEye.Magnitude > 0.5 and Hitbox.angleBetween(fromEye.Unit, aimDir) <= 10 then
+			aimDir = fromEye
+		end
 	end
 	origin = Combat.headPosition(c)
 	aimDir = aimDir.Unit
@@ -355,9 +397,10 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 		-- A stab reaches `range` studs and is stopped by walls. Melee ignores zone multipliers.
 		local wall = workspace:Raycast(origin, aimDir * w.range, occlusion())
 		local victim, zone = trace(c, origin, aimDir, if wall then wall.Distance else w.range, rewind)
-		Net.ShotFx:FireAllClients(c.model, origin, origin, false, true)
+		Net.ShotFx:FireAllClients(c.model, origin, origin, false, true, true)
+		Report.shot(c, origin, aimDir, if victim then victim.name else nil, zone)
 		if victim and zone then
-			Combat.damage(victim, w.damage, c, zone :: Config.Zone)
+			Combat.damage(victim, w.damage, c, zone :: Config.Zone, id)
 		end
 		return
 	end
@@ -366,16 +409,39 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 	Combatants.sync(c)
 	local velocity = c.root.AssemblyLinearVelocity
 	local moving = Vector3.new(velocity.X, 0, velocity.Z).Magnitude > 3
-	local spread = (if c.aiming then w.spreadAim else w.spreadHip) + (if moving then w.spreadMoving else 0)
-	for _ = 1, w.pellets do
+	local spread = if c.perfect
+		then 0
+		else (if c.aiming then w.spreadAim else w.spreadHip) + (if moving then w.spreadMoving else 0)
+	local RANK = { Head = 3, Body = 2, Legs = 1 }
+	local dealt: { [Combatant]: number } = {}
+	local bestZone: Config.Zone?, anyKilled, firstVictim: string? = nil, false, nil
+	for pellet = 1, w.pellets do
 		local dir = Hitbox.spread(aimDir, spread, rng)
 		local wallHit = workspace:Raycast(origin, dir * w.range, occlusion())
 		local victim, zone, dist = trace(c, origin, dir, if wallHit then wallHit.Distance else w.range, rewind)
-		Net.ShotFx:FireAllClients(c.model, origin, origin + dir * dist, victim == nil and wallHit ~= nil, false)
+		local hitWall = victim == nil and wallHit ~= nil
+		Net.ShotFx:FireAllClients(c.model, origin, origin + dir * dist, hitWall, false, pellet == 1)
 		if victim and zone then
+			-- Before damage: a killing hit may start the bullet cam, which reads these.
+			c.lastShotFrom, c.lastShotHit = origin, origin + dir * dist
 			local hitZone = zone :: Config.Zone
-			Combat.damage(victim, Hitbox.damage(w, hitZone, dist), c, hitZone)
+			local amount = Hitbox.damage(w, hitZone, dist)
+			local killed = Combat.damage(victim, amount, c, hitZone, id, true)
+			if killed ~= nil then
+				dealt[victim] = (dealt[victim] or 0) + amount
+				firstVictim = firstVictim or victim.name
+				anyKilled = anyKilled or killed
+				if not bestZone or (RANK[hitZone] or 0) > (RANK[bestZone] or 0) then
+					bestZone = hitZone
+				end
+			end
 		end
+	end
+	Report.shot(c, origin, aimDir, firstVictim, bestZone)
+	-- One hit marker for the shooter, one damage event per victim.
+	for victim, amount in dealt do
+		Combat.notify(c, victim, bestZone, anyKilled, amount)
+		bestZone = nil
 	end
 	if c.ammo[id] <= 0 then
 		Combat.reload(c)
@@ -388,13 +454,17 @@ function Combat.bind()
 		if not c then
 			return
 		end
-		if not Net.isVector(origin, 1e4) or not Net.isDirection(dir) then
-			AntiCheat.flag(c, "malformed Fire payload")
+		-- Remote-level spam cap first, so malformed spam is capped too; weapon cadence is in Combat.fire.
+		-- Network hitches deliver shots in bunches, so extra packets are just dropped; only a flood far
+		-- beyond any weapon (a second, much looser bucket) counts as a cheat flag.
+		if not Net.allow(player, "Fire", AC.MaxShotsPerSecond, 8) then
+			if not Net.allow(player, "FireFlood", AC.MaxShotsPerSecond, 24) then
+				AntiCheat.flag(c, "Fire remote spam")
+			end
 			return
 		end
-		-- Remote-level spam cap; each weapon's own cadence is enforced in Combat.fire.
-		if not Net.allow(player, "Fire", AC.MaxShotsPerSecond, 2) then
-			AntiCheat.flag(c, "Fire remote spam")
+		if not Net.isVector(origin, 1e4) or not Net.isDirection(dir) then
+			AntiCheat.flag(c, "malformed Fire payload")
 			return
 		end
 		Combat.fire(c, origin, dir)
@@ -414,20 +484,22 @@ function Combat.bind()
 	end)
 	Net.Reload.OnServerEvent:Connect(function(player)
 		local c = Combatants.byPlayer(player)
-		if c and Net.allow(player, "Reload", 2, 2) then
+		if c and Net.allow(player, "Reload", 2, 2) and Combat.isLive(c) then
 			Combat.reload(c)
 		end
 	end)
 	Net.Aim.OnServerEvent:Connect(function(player, aiming)
 		local c = Combatants.byPlayer(player)
-		if not c or not Net.allow(player, "Aim", 10, 5) then
+		-- Accepted during Freeze too: a held aim is resent at round start, before the round goes Live.
+		if not c or not Net.allow(player, "Aim", 10, 5) or not c.alive then
 			return
 		end
 		if typeof(aiming) ~= "boolean" then
 			AntiCheat.flag(c, "malformed Aim payload")
 			return
 		end
-		c.aiming = aiming
+		local id = Combatants.weapon(c)
+		c.aiming = aiming and id ~= nil and Config.Weapons[id].kind ~= "melee"
 		if aiming and c.stance == "Sprint" then
 			Combat.setStance(c, "Stand")
 		end
@@ -435,7 +507,7 @@ function Combat.bind()
 	end)
 	Net.Stance.OnServerEvent:Connect(function(player, stance)
 		local c = Combatants.byPlayer(player)
-		if not c or not Net.allow(player, "Stance", 10, 5) then
+		if not c or not Net.allow(player, "Stance", 10, 5) or not Combat.isLive(c) then
 			return
 		end
 		if stance == "Slide" then

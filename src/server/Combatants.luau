@@ -11,7 +11,7 @@ local Config = require(ReplicatedStorage.Shared.Config)
 export type ArenaHooks = {
 	id: string,
 	isLive: () -> boolean,
-	onElimination: (victim: any, attacker: any?, zone: Config.Zone?) -> (),
+	onElimination: (victim: any, attacker: any?, zone: Config.Zone?, weapon: string?) -> (),
 	boundsMin: Vector3,
 	boundsMax: Vector3,
 }
@@ -38,10 +38,14 @@ export type Combatant = {
 	reloadToken: number,
 	reloading: boolean,
 	lastShot: number,
+	lastShotFrom: Vector3?, -- the last pellet that hit a combatant: shooter's eye and rewound contact
+	lastShotHit: Vector3?,
 	aiming: boolean,
 	shieldUntil: number,
 	historyT: { number },
 	historyCF: { CFrame },
+	historyCrouch: { boolean },
+	perfect: boolean?, -- Bootcamp bots: no spread at all
 	looks: { { t: number, dir: Vector3 } },
 	lastGrounded: CFrame,
 	lastCheck: number,
@@ -54,6 +58,7 @@ local Combatants = {}
 local SYNCED = { "Weapon", "Slots", "Ammo", "Reloading", "Gadget", "GadgetLeft", "Healing", "Shielded", "Stance" }
 
 local list: { Combatant } = {}
+local watchers: { [Combatant]: RBXScriptConnection } = {}
 
 function Combatants.new(
 	arena: ArenaHooks,
@@ -63,14 +68,19 @@ function Combatants.new(
 	model: Model,
 	spawn: CFrame
 ): Combatant
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	local root = model:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not root or not root:IsA("BasePart") then
+		error(`Combatants.new: {model:GetFullName()} has no Humanoid or HumanoidRootPart`)
+	end
 	local c: Combatant = {
 		arena = arena,
 		name = name,
 		player = player,
 		team = team,
 		model = model,
-		humanoid = model:FindFirstChildOfClass("Humanoid") :: Humanoid,
-		root = model:FindFirstChild("HumanoidRootPart") :: BasePart,
+		humanoid = humanoid,
+		root = root,
 		alive = true,
 		weapons = {},
 		equipped = 1,
@@ -89,12 +99,18 @@ function Combatants.new(
 		shieldUntil = 0,
 		historyT = {},
 		historyCF = {},
+		historyCrouch = {},
 		looks = {},
 		lastGrounded = spawn,
 		lastCheck = os.clock(),
 	}
 	model:SetAttribute("Team", team)
 	table.insert(list, c)
+	watchers[c] = model.AncestryChanged:Connect(function()
+		if not model:IsDescendantOf(game) then
+			c.alive = false
+		end
+	end)
 	return c
 end
 
@@ -106,20 +122,37 @@ function Combatants.all(): { Combatant }
 	return list
 end
 
+local function retire(c: Combatant)
+	c.alive = false
+	c.reloadToken += 1
+	local watcher = watchers[c]
+	if watcher then
+		watcher:Disconnect()
+		watchers[c] = nil
+	end
+	if c.player then
+		for _, key in SYNCED do
+			c.player:SetAttribute(key, nil)
+		end
+	end
+end
+
 -- Ends every combatant in one arena (other arenas keep fighting).
 function Combatants.clear(arena: ArenaHooks)
 	for i = #list, 1, -1 do
-		local c = list[i]
-		if c.arena == arena then
-			c.alive = false
-			c.reloadToken += 1
-			if c.player then
-				for _, key in SYNCED do
-					c.player:SetAttribute(key, nil)
-				end
-			end
+		if list[i].arena == arena then
+			retire(list[i])
 			table.remove(list, i)
 		end
+	end
+end
+
+-- Ends one combatant (the lobby practice range adds and removes them one at a time).
+function Combatants.remove(c: Combatant)
+	local i = table.find(list, c)
+	if i then
+		retire(c)
+		table.remove(list, i)
 	end
 end
 
@@ -157,26 +190,27 @@ function Combatants.teleport(c: Combatant, cf: CFrame)
 	c.lastCheck = os.clock()
 	table.clear(c.historyT)
 	table.clear(c.historyCF)
+	table.clear(c.historyCrouch)
 end
 
--- Where `c` was `secondsAgo` ago, interpolated from recorded history.
-function Combatants.rewound(c: Combatant, secondsAgo: number): CFrame
-	local times, cfs = c.historyT, c.historyCF
+-- Where `c` was `secondsAgo` ago, interpolated from recorded history, and whether it was crouched.
+function Combatants.rewound(c: Combatant, secondsAgo: number): (CFrame, boolean)
+	local times, cfs, crouch = c.historyT, c.historyCF, c.historyCrouch
 	local n = #times
 	if n == 0 or secondsAgo <= 0 then
-		return c.root.CFrame
+		return c.root.CFrame, c.stance == "Crouch"
 	end
 	local t = os.clock() - secondsAgo
 	if t <= times[1] then
-		return cfs[1]
+		return cfs[1], crouch[1]
 	end
 	for i = n, 2, -1 do
 		if times[i - 1] <= t then
-			local a = (t - times[i - 1]) / math.max(times[i] - times[i - 1], 1e-6)
-			return cfs[i - 1]:Lerp(cfs[i], math.clamp(a, 0, 1))
+			local a = math.clamp((t - times[i - 1]) / math.max(times[i] - times[i - 1], 1e-6), 0, 1)
+			return cfs[i - 1]:Lerp(cfs[i], a), if a < 0.5 then crouch[i - 1] else crouch[i]
 		end
 	end
-	return cfs[n]
+	return cfs[n], crouch[n]
 end
 
 RunService.Heartbeat:Connect(function()
@@ -185,9 +219,11 @@ RunService.Heartbeat:Connect(function()
 		if c.alive and c.root.Parent then
 			table.insert(c.historyT, now)
 			table.insert(c.historyCF, c.root.CFrame)
+			table.insert(c.historyCrouch, c.stance == "Crouch")
 			while #c.historyT > 2 and now - c.historyT[1] > HISTORY_SECONDS do
 				table.remove(c.historyT, 1)
 				table.remove(c.historyCF, 1)
+				table.remove(c.historyCrouch, 1)
 			end
 		end
 		local shielded = now < c.shieldUntil

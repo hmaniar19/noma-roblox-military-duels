@@ -10,6 +10,8 @@ local Config = require(ReplicatedStorage.Shared.Config)
 local Economy = require(script.Parent.Economy)
 local Loadout = require(script.Parent.Loadout)
 local Net = require(script.Parent.Net)
+local PracticeRange = require(script.Parent.PracticeRange)
+local Rig = require(script.Parent.Rig)
 local World = require(script.Parent.World)
 
 local Lobby = {}
@@ -19,6 +21,7 @@ local random = Random.new()
 function Lobby.run(world: World.World)
 	Players.CharacterAutoLoads = false
 	local spawn = world.lobby.spawn
+	local loads: { [Player]: number } = {}
 
 	local function toLobby(player: Player)
 		player:SetAttribute("Team", nil)
@@ -27,17 +30,29 @@ function Lobby.run(world: World.World)
 		if player.Parent == nil then
 			return
 		end
+		-- Each call supersedes earlier ones still yielding; only the newest load may move the player.
+		local gen = (loads[player] or 0) + 1
+		loads[player] = gen
+		local function stale(): boolean
+			return loads[player] ~= gen or not player:IsDescendantOf(Players) or player:GetAttribute("Arena") ~= nil
+		end
 		local at = spawn * CFrame.new(random:NextNumber(-10, 10), 0, random:NextNumber(-6, 6))
 		-- Stream Camp More Maniar to their client before the character exists: a new character starts
 		-- at the default spawn point, so the move below must follow the load with no wait in between.
 		pcall(player.RequestStreamAroundAsync, player, at.Position)
-		if not player:IsDescendantOf(Players) then
-			return -- left while the area loaded
+		if stale() then
+			return
 		end
-		player:LoadCharacterAsync()
+		local loaded = false
+		for _ = 1, 3 do
+			loaded = pcall(player.LoadCharacterAsync, player)
+			if loaded or stale() then
+				break
+			end
+			task.wait(1)
+		end
 		local character = player.Character
-		-- Skip the move if a match picked them up while this load was running.
-		if not character or player:GetAttribute("Arena") ~= nil then
+		if not loaded or not character or stale() then
 			return
 		end
 		character:PivotTo(at)
@@ -56,6 +71,13 @@ function Lobby.run(world: World.World)
 	for _, m in Config.Maps do
 		arenas[m.id] = Arena.new(world.maps[m.id], toLobby)
 	end
+	-- The lobby box (Camp More Maniar's walls) is the practice range's anti-cheat bounds.
+	local lobbyOrigin = spawn.Position - Vector3.new(0, 3.5, 22)
+	local range = PracticeRange.new(
+		world.lobby.range,
+		lobbyOrigin + Vector3.new(-90, -12, -70),
+		lobbyOrigin + Vector3.new(90, 60, 70)
+	)
 
 	local function arenaOf(player: Player, attribute: string): Arena.Arena?
 		local id = player:GetAttribute(attribute)
@@ -63,15 +85,53 @@ function Lobby.run(world: World.World)
 	end
 
 	Net.Queue.OnServerEvent:Connect(function(player, action, mapId, mode)
-		if not Net.allow(player, "Queue", 4, 2) or player:GetAttribute("Arena") ~= nil then
-			return -- already in a match
+		if not Net.allow(player, "Queue", 4, 2) then
+			return
+		end
+		local target: Arena.Arena? = nil
+		if action == "Join" then
+			if typeof(mapId) ~= "string" or not arenas[mapId] or (mode ~= "1v1" and mode ~= "2v2") then
+				return
+			end
+			if typeof(player:GetAttribute("Coins")) ~= "number" then
+				Net.Toast:FireClient(player, "Profile loading", "Your profile is still loading. Try again in a moment.")
+				return
+			end
+			target = arenas[mapId]
+		elseif action ~= "Leave" then
+			return
+		end
+		if range.isPracticing(player) then
+			range.leave(player) -- queueing ends practice
+		end
+		if player:GetAttribute("Arena") ~= nil then
+			local playing = arenaOf(player, "Arena")
+			if playing and action == "Leave" then
+				playing.concede(player) -- a saved loss, then back to Camp More Maniar
+			else
+				Net.Toast:FireClient(player, "Already in a match", "Finish or leave your match before queueing.")
+			end
+			return
 		end
 		local current = arenaOf(player, "Queued")
 		if current then
 			current.leave(player)
 		end
-		if action == "Join" and typeof(mapId) == "string" and arenas[mapId] then
-			arenas[mapId].join(player, if mode == "2v2" then "2v2" else "1v1")
+		if target then
+			target.join(player, if mode == "2v2" then "2v2" else "1v1")
+		end
+	end)
+
+	-- Free emotes in Camp More Maniar; the gold salute is for players with the Eddie's Honor title.
+	Net.Emote.OnServerEvent:Connect(function(player, id)
+		local character = player.Character
+		if not character or player:GetAttribute("Arena") ~= nil or not Net.allow(player, "Emote", 1, 2) then
+			return
+		end
+		for _, e in Config.Emotes do
+			if e.id == id and (e.title == nil or player:GetAttribute("Title") == e.title) then
+				Rig.emote(character, e.anim)
+			end
 		end
 	end)
 
@@ -87,6 +147,7 @@ function Lobby.run(world: World.World)
 		task.spawn(toLobby, player)
 	end
 	Players.PlayerRemoving:Connect(function(player)
+		loads[player] = nil
 		for _, attribute in { "Queued", "Arena" } do
 			local arena = arenaOf(player, attribute)
 			if arena then
