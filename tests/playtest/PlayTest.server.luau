@@ -186,6 +186,9 @@ if bot then
 	local moved, shots = 0, 0
 	local lastAmmo = bot.ammo[bot.weapons[1]]
 	local deadline = os.clock() + 25
+	local mine = Combatants.byPlayer(player)
+	-- Stop as soon as the bot has shown it moves and shoots, or before it can take the round: the test
+	-- player stands still, and the round must go to the test's headshot.
 	while os.clock() < deadline and range:GetAttribute("Phase") == "Live" and bot.alive do
 		task.wait(0.5)
 		moved = math.max(moved, (bot.root.Position - start).Magnitude)
@@ -194,13 +197,19 @@ if bot then
 			shots += lastAmmo - ammo
 		end
 		lastAmmo = ammo
+		local hurt = mine ~= nil and mine.humanoid.Health < 100
+		if (moved > 8 and (shots > 0 or hurt)) or (mine ~= nil and mine.humanoid.Health < 50) then
+			break
+		end
 	end
 	result("bot: moves around (Shooting Range)", moved > 8, `{math.floor(moved)} studs`)
 	local me = Combatants.byPlayer(player)
 	result("bot: shoots at the player", shots > 0 or (me ~= nil and me.humanoid.Health < 100), shots)
 	-- Round 1: a headshot win -> bullet cam, then the finisher.
+	print(`PLAYTEST INFO round 1 kill: bot alive {bot.alive}, me {me ~= nil}`)
 	if bot.alive and me then
-		Combat.damage(bot, 999, me, "Head")
+		local killed = Combat.damage(bot, 999, me, "Head", "AR") -- a gun kill: only those get the bullet cam
+		print(`PLAYTEST INFO round 1 headshot landed: {killed}`)
 	end
 end
 result(
@@ -242,16 +251,15 @@ end)
 task.wait(Config.SpawnShieldSeconds + 0.5)
 me = Combatants.byPlayer(player)
 bot = botOf("ShootingRange")
-if bot and me then
-	Combat.damage(bot, 999, me, "Body")
-end
-result(
-	"match: ends after the deciding round",
-	waitFor(25, function()
-		return range:GetAttribute("Phase") == "MatchEnd"
-	end),
-	range:GetAttribute("Phase")
-)
+-- Retried until it lands: a spawn shield blocks damage, and the round must not go to the bot first.
+print(`PLAYTEST INFO round 3: bot {bot ~= nil}, me {me ~= nil}, me alive {me and me.alive}`)
+local landed = waitFor(10, function()
+	return bot == nil or me == nil or not bot.alive or Combat.damage(bot, 999, me, "Body", "AR") ~= nil
+end)
+print(`PLAYTEST INFO round 3 kill landed {landed}, bot alive {bot and bot.alive}, me alive {me and me.alive}`)
+result("match: ends after the deciding round", landed and waitFor(25, function()
+	return range:GetAttribute("Phase") == "MatchEnd"
+end), `{range:GetAttribute("Phase")} {range:GetAttribute("NavyScore")}-{range:GetAttribute("GreyScore")}`)
 result(
 	"celebration: stage appears",
 	waitFor(8, function()
@@ -288,6 +296,7 @@ for _, mapId in { "DesertOutpost", "UrbanTown" } do
 	-- Desert Outpost doubles as the Bot Bootcamp check: a flagged player plays perfect bots alone.
 	local bootcamp = mapId == "DesertOutpost"
 	if bootcamp then
+		waitFor(Config.MatchEndSeconds + 30, inLobby)
 		Economy.setBootcamp(player, true)
 		result("bootcamp: status published", player:GetAttribute("Bootcamp") == true)
 	end

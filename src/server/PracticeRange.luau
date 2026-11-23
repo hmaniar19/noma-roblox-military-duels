@@ -68,7 +68,9 @@ function PracticeRange.new(info: RangeInfo, lobbyMin: Vector3, lobbyMax: Vector3
 	end
 
 	local lastTry: { [Player]: number } = {}
-	local function practice(player: Player, weapon: string)
+	-- `at` is the rack the prompt belongs to: the player must really be within its reach (a remotely
+	-- fired prompt is rejected), which can be a little behind the firing line.
+	local function practice(player: Player, weapon: string, at: Vector3, reach: number)
 		local now = os.clock()
 		if now - (lastTry[player] or 0) < 0.5 then
 			return
@@ -81,7 +83,7 @@ function PracticeRange.new(info: RangeInfo, lobbyMin: Vector3, lobbyMax: Vector3
 		if (current ~= nil and current ~= ID) or player:GetAttribute("Queued") or not root or not humanoid then
 			return -- in (or queued for) a real match
 		end
-		if humanoid.Health <= 0 or not inside((root :: BasePart).Position, info.min, info.max) then
+		if humanoid.Health <= 0 or ((root :: BasePart).Position - at).Magnitude > reach + 3 then
 			return
 		end
 		local c = Combatants.byPlayer(player)
@@ -142,7 +144,7 @@ function PracticeRange.new(info: RangeInfo, lobbyMin: Vector3, lobbyMax: Vector3
 		prompt.RequiresLineOfSight = false
 		prompt.Parent = handle
 		prompt.Triggered:Connect(function(player)
-			practice(player, weapon)
+			practice(player, weapon, handle.Position, prompt.MaxActivationDistance)
 		end)
 	end
 

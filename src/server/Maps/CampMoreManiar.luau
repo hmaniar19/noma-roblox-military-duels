@@ -254,7 +254,8 @@ return function(origin: Vector3): LobbyInfo
 		spawn = kit:at(CFrame.lookAt(Vector3.new(0, 3.5, 22), Vector3.new(0, 3.5, 0))),
 		leaderboard = leaderboard,
 		range = {
-			min = kit.origin + Vector3.new(-22, -2, 29),
+			-- Starts a rack prompt's reach (9) behind the firing line, so taking a weapon is always "on the range".
+			min = kit.origin + Vector3.new(-22, -2, FIRE_Z - 10),
 			max = kit.origin + Vector3.new(22, 30, BERM_Z + 1),
 			racks = racks,
 			targets = targets,

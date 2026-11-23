@@ -44,6 +44,8 @@ local function shoot(target: Model, seconds: number): boolean
 			params.FilterDescendantsInstances = { character :: Model, target }
 			if not workspace:Raycast(head.Position, aim.Position - head.Position, params) then
 				mine:Move((aim.Position - head.Position) * Vector3.new(1, 0, 1), false)
+				-- Aim like a player: in first person the body turns with the camera, and the server checks it.
+				camera.CFrame = CFrame.lookAt(camera.CFrame.Position, aim.Position)
 				task.wait(0.25)
 				mine:Move(Vector3.zero)
 				-- Two shots: enough to see damage without ending the round (the server test ends it).
@@ -90,9 +92,21 @@ local function onStep(name: string)
 		remotes.Shop:FireServer("EquipFinisher", "Thunder")
 	elseif name == "TakeRackWeapon" then
 		local folder = workspace:WaitForChild("PracticeRange")
-		local rack = folder:FindFirstChildWhichIsA("Model") :: Model
-		local prompt = rack:FindFirstChildWhichIsA("ProximityPrompt", true)
-		print(`PLAYTEST TRACE rack {rack.Name} prompt {prompt ~= nil}`)
+		-- The nearest rack prompt (the server test stands the player at one); dummies share the folder.
+		local prompt: ProximityPrompt? = nil
+		local best = math.huge
+		local character = player.Character
+		local here = character and character:GetPivot().Position or Vector3.zero
+		for _, p in folder:GetDescendants() do
+			local part = p.Parent
+			if p:IsA("ProximityPrompt") and part and part:IsA("BasePart") then
+				local d = (part.Position - here).Magnitude
+				if d < best then
+					prompt, best = p, d
+				end
+			end
+		end
+		print(`PLAYTEST TRACE rack prompt {prompt ~= nil} at {math.floor(best)} studs`)
 		-- The prompt only responds once it is showing; keep pressing E for a few seconds.
 		local deadline = os.clock() + 5
 		while prompt and os.clock() < deadline and player:GetAttribute("Arena") ~= "Practice" do
