@@ -5,6 +5,8 @@ The full design is in `research/brief.md`. Code lives in `src/` and syncs into R
 
 **Port 34873.** This game's `rojo serve` uses port 34873 (`servePort` in `default.project.json`); Stink-a-Dad in `~/orca/noma-roblox` uses 34872. In Studio's Rojo panel, set the port to **34873** before clicking Connect, or the window will receive Stink-a-Dad's code instead.
 
+**Agent Studio testing rule:** before any Studio test, stop every `rojo serve` from the *other* game (and any Studio window it's feeding). Studio opens on the main display, the PM161W second monitor; the owner works on the LG TV. Never send keystrokes (F5, osascript `key code`) or `activate` Studio: start and stop Play through the menu with System Events (`Test → Start Test Session → Test`, `Test → Stop`), which leaves the owner's front app alone. Capture only that screen: `screencapture -x -D 1`.
+
 ## Play it
 
 1. `rojo build default.project.json -o MilitaryDuels.rbxl`, then open the file in Roblox Studio and press **Play**.

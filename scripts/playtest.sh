@@ -49,27 +49,29 @@ collect() {
 }
 
 # Look for the test window among Studio's own windows: Studio may open behind whatever app is in use.
-open -a RobloxStudio "$PLACE"
+# Studio pulls itself to the front while it starts, so remember the owner's app and hand focus back.
+owner_app=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null || true)
+open -g -a RobloxStudio "$PLACE"
 found=""
 for _ in $(seq 1 90); do
 	names=$(osascript -e 'tell application "System Events" to if exists process "RobloxStudio" then get name of every window of process "RobloxStudio"' 2>/dev/null || true)
 	[[ "$names" == *playtest.rbxl* ]] && found=1 && break
 	sleep 2
 done
+front=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null || true)
+if [[ "$front" == "RobloxStudio" && -n "$owner_app" && "$owner_app" != "RobloxStudio" ]]; then
+	osascript -e "tell application \"System Events\" to set frontmost of process \"$owner_app\" to true" 2>/dev/null || true
+fi
 [[ -n "$found" ]] || { echo "PLAYTEST Studio window never came up"; close_window; exit 1; }
 
-# Press Play (F5) only while Studio is in front (a keypress goes to the frontmost app); press again if
-# no test output shows up (Studio may still have been loading, or another app took focus).
+# Press Play through Studio's menu (Test → Start Test Session → Test). A menu click goes to Studio
+# even in the background, so the owner's keyboard and front app are never touched. Retry if no test
+# output shows up (Studio may still have been loading).
+PLAY_ITEM='menu item "Test" of menu 1 of menu item "Start Test Session" of menu 1 of menu bar item "Test" of menu bar 1'
 started=0
 for attempt in 1 2 3; do
 	sleep 5
-	for _ in 1 2 3 4 5; do
-		osascript -e 'tell application "RobloxStudio" to activate' 2>/dev/null || true
-		sleep 1
-		front=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null || true)
-		[[ "$front" == "RobloxStudio" ]] && break
-	done
-	[[ "$front" == "RobloxStudio" ]] && osascript -e 'tell application "System Events" to key code 96'
+	osascript -e "tell application \"System Events\" to tell process \"RobloxStudio\" to click $PLAY_ITEM" >/dev/null 2>&1 || true
 	for _ in $(seq 1 45); do
 		sleep 1
 		collect
