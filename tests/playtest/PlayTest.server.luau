@@ -137,7 +137,7 @@ if rack and root() then
 	end
 	step("ShootTarget")
 	task.wait(6)
-	local r = root()
+	r = root()
 	if r then
 		r.CFrame = r.CFrame - Vector3.new(0, 0, 40) -- walk off the range toward the statue
 	end
