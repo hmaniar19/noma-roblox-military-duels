@@ -48,9 +48,23 @@ collect() {
 	done
 }
 
+# Studio can't open a window or play while the Mac is locked, so fail fast instead of retrying.
+if [[ "$(ioreg -n Root -d1)" == *'"IOConsoleLocked" = Yes'* ]]; then
+	echo "PLAYTEST screen is locked; unlock the Mac and run again"
+	exit 1
+fi
+
 # Look for the test window among Studio's own windows: Studio may open behind whatever app is in use.
-# Studio pulls itself to the front while it starts, so remember the owner's app and hand focus back.
+# Studio pulls itself to the front while it starts (sometimes more than once), so remember the
+# owner's app and hand focus back whenever Studio has taken it.
 owner_app=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null || true)
+give_back_focus() {
+	local front
+	front=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null || true)
+	if [[ "$front" == "RobloxStudio" && -n "$owner_app" && "$owner_app" != "RobloxStudio" ]]; then
+		osascript -e "tell application \"System Events\" to set frontmost of process \"$owner_app\" to true" 2>/dev/null || true
+	fi
+}
 open -g -a RobloxStudio "$PLACE"
 found=""
 for _ in $(seq 1 90); do
@@ -58,10 +72,7 @@ for _ in $(seq 1 90); do
 	[[ "$names" == *playtest.rbxl* ]] && found=1 && break
 	sleep 2
 done
-front=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null || true)
-if [[ "$front" == "RobloxStudio" && -n "$owner_app" && "$owner_app" != "RobloxStudio" ]]; then
-	osascript -e "tell application \"System Events\" to set frontmost of process \"$owner_app\" to true" 2>/dev/null || true
-fi
+give_back_focus
 [[ -n "$found" ]] || { echo "PLAYTEST Studio window never came up"; close_window; exit 1; }
 
 # Press Play through Studio's menu (Test → Start Test Session → Test). A menu click goes to Studio
@@ -72,6 +83,7 @@ started=0
 for attempt in 1 2 3; do
 	sleep 5
 	osascript -e "tell application \"System Events\" to tell process \"RobloxStudio\" to click $PLAY_ITEM" >/dev/null 2>&1 || true
+	give_back_focus
 	for _ in $(seq 1 45); do
 		sleep 1
 		collect

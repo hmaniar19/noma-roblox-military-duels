@@ -318,9 +318,15 @@ for _, mapId in { "DesertOutpost", "UrbanTown" } do
 			moved = math.max(moved, (b.root.Position - start).Magnitude)
 		end
 		result(`bot: moves around ({mapId})`, moved > 8, `{math.floor(moved)} studs`)
-		local mine = Combatants.byPlayer(player)
-		if b.alive and mine then
-			Combat.damage(b, 999, mine, "Body")
+		-- The kill can trade with the bot's last shot; a draw replays the round, so keep finishing the
+		-- bot whenever a round is live until the match is over.
+		local finishBy = os.clock() + 60
+		while os.clock() < finishBy and not inLobby() do
+			local target, mine = botOf(mapId), Combatants.byPlayer(player)
+			if arena:GetAttribute("Phase") == "Live" and target and mine then
+				Combat.damage(target, 999, mine, "Body")
+			end
+			task.wait(0.5)
 		end
 	else
 		result(`bot: present on {mapId}`, false, "no bot")
