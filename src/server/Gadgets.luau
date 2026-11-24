@@ -130,6 +130,10 @@ local function throw(c: Combatant, kind: Config.GadgetId, dir: Vector3)
 	local blocked = workspace:Raycast(eye, dir * 2.5, Combat.occlusion())
 	grenade.Position = if blocked then blocked.Position - dir * 0.6 else eye + dir * 2
 	grenade.Parent = arenaFolder(c.arena.id)
+	-- The server simulates the throw, so the blast center can't be moved by the thrower's client.
+	if grenade:CanSetNetworkOwnership() then
+		grenade:SetNetworkOwner(nil)
+	end
 	grenade.AssemblyLinearVelocity = dir * spec.throwSpeed + Vector3.new(0, 12, 0)
 	task.delay(spec.fuse, function()
 		if grenade.Parent then

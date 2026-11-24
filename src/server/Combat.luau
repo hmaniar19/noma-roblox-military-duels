@@ -293,6 +293,7 @@ end
 
 local ORIGIN_SAMPLES: { number } = { 0.1, 0.2, 0.35 }
 local MAX_SPEED = math.max(Config.SprintSpeed, Config.SlideSpeed) * 1.25
+local FLICK_WAIT = 0.12 -- how long a flick shot waits for the body's facing to catch up
 
 -- Validates a shot claim from a player. Returns the reason it was rejected, or nil.
 -- Call after AntiCheat.validate so the root (and so the head) is a position the server accepted.
@@ -341,7 +342,8 @@ end
 
 -- One trigger pull (or knife swing). Bots are trusted; player claims are checked. Every shot is cast
 -- from the server's validated head position; the client's origin only locates the crosshair's target.
-function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
+-- `late` is how long the server held the shot back (see the flick retry below).
+function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3, late: number?)
 	local id = Combatants.weapon(c)
 	if not id or not c.alive or not Combat.isLive(c) or c.reloading or c.healingUntil > 0 then
 		return
@@ -354,7 +356,7 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 	local now = os.clock()
 	-- Every weapon's cadence applies to everyone. Players get 10% slack for network jitter; a
 	-- bunched shot is dropped, not flagged (the remote's token bucket flags real spam).
-	if now - c.lastShot < w.fireInterval * (if c.player then 0.9 else 1) then
+	if not late and now - c.lastShot < w.fireInterval * (if c.player then 0.9 else 1) then
 		return
 	end
 	if c.player then
@@ -362,7 +364,13 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 			return -- fired from a position the server just corrected
 		end
 		local reason = rejectClaim(c, origin, aimDir)
-		if reason == "shot direction does not match look direction" then
+		if reason == "shot direction does not match look direction" and not late then
+			-- A fast flick can reach the server before the body's turn does: hold the shot once
+			-- until the facing catches up, then judge it against where targets were when fired.
+			c.lastShot = now
+			task.delay(FLICK_WAIT, Combat.fire, c, origin, aimDir, FLICK_WAIT)
+			return
+		elseif reason == "shot direction does not match look direction" then
 			AntiCheat.flagAim(c, aimDir, reason)
 		elseif reason then
 			AntiCheat.flag(c, reason)
@@ -391,7 +399,7 @@ function Combat.fire(c: Combatant, origin: Vector3, aimDir: Vector3)
 	if c.shieldUntil > 0 then
 		Combat.dropShield(c)
 	end
-	local rewind = if c.player then math.clamp(c.player:GetNetworkPing() + 0.05, 0, AC.MaxRewind) else 0
+	local rewind = if c.player then math.clamp(c.player:GetNetworkPing() + 0.05 + (late or 0), 0, AC.MaxRewind) else 0
 
 	if w.kind == "melee" then
 		-- A stab reaches `range` studs and is stopped by walls. Melee ignores zone multipliers.

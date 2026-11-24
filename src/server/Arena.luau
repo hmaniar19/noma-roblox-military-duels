@@ -1,7 +1,7 @@
 --!strict
 -- One arena per map, all running at once. Players queue for a map and a mode (1v1 or 2v2) from the
--- Camp More Maniar lobby; everyone who queues for the same map and mode plays together (bots fill
--- empty slots). A match is first to 5 round wins. Each round:
+-- Camp More Maniar lobby; each mode and ranked setting has its own queue per map (bots fill empty
+-- slots in casual ones). A match is first to 5 round wins. Each round:
 -- an 8-second freeze to pick a loadout, 2:00 live, then a win, loss or draw. Sides swap every round;
 -- at 4-4 each team plays Sudden Death with one sniper and one knife. A player who leaves or concedes is
 -- replaced by a bot and the match counts as their loss; a team with no players left forfeits. After the match
@@ -26,15 +26,13 @@ local Rig = require(script.Parent.Rig)
 
 type Combatant = Combatants.Combatant
 type TeamId = Config.TeamId
--- `userId` on a bot entry: the friend whose avatar and name the bot wears.
--- `ranked`: the player's Ranked attribute when the roster was picked. `paid`: their result is committed.
+-- `userId` on a bot entry: the friend whose avatar and name the bot wears. `paid`: their result is committed.
 type Entry = {
 	player: Player?,
 	team: TeamId,
 	name: string,
 	combatant: Combatant?,
 	userId: number?,
-	ranked: boolean?,
 	paid: boolean?,
 }
 type Result = TeamId | "Draw"
@@ -85,7 +83,10 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 
 	local queue: { Player } = {}
 	local modeOf: { [Player]: string } = {} -- each queued player's chosen mode
+	local joinedAt: { [Player]: number } = {} -- server time each queued player joined
 	local roster: { Entry } = {}
+	local scores: Scores = { Navy = 0, Grey = 0 }
+	local rankedMatch = false -- every slot is a real player who entered ranked (fixed at the roster pick)
 	local forfeit: TeamId? = nil
 	local decided = false
 	local lastElimination = ""
@@ -498,7 +499,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		return finisher(result :: TeamId)
 	end
 
-	local function playRound(round: number, scores: Scores): Result?
+	local function playRound(round: number): Result?
 		clearField()
 		Report.roundStart(id, `{id}_{math.floor(matchStart)}`, round)
 		lastElimination = ""
@@ -564,6 +565,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		if forfeit then
 			-- Removing the vehicles ends the ride for anyone still aboard.
 			rides:ClearAllChildren()
+			Report.roundEnd(id)
 			return nil
 		end
 
@@ -617,18 +619,15 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	-- (a forfeit win counts as 80); the losers earn 10 for each round they won. Everyone who finishes
 	-- earns XP (more for a win and per elimination), and ranked players gain or lose rank points. Each
 	-- player is paid once, as soon as the result is known: at the fifth point, before the closing scenes.
-	local function payout(winner: TeamId, scores: Scores, headshot: boolean)
-		local P, X = Config.Payouts, Config.Xp
-		-- Rank points move only between human teams that both entered ranked.
-		local rankedTeams: { [string]: boolean } = {}
-		local anyBot = false
-		for _, e in roster do
-			anyBot = anyBot or e.player == nil
-			if e.ranked then
-				rankedTeams[e.team] = true
-			end
+	local function loserCoins(player: Player, team: TeamId)
+		local won = scores[team]
+		if won > 0 then
+			Economy.award(player, Config.Payouts.LoserPerRound * won, `{won} round(s) won`)
 		end
-		local ranked = not anyBot and rankedTeams.Navy and rankedTeams.Grey
+	end
+
+	local function payout(winner: TeamId, headshot: boolean)
+		local P, X = Config.Payouts, Config.Xp
 		for _, e in roster do
 			local player = e.player
 			if player and player.Parent and not e.paid then
@@ -637,12 +636,12 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				if won then
 					local amount = if headshot then P.WinHeadshot else P.WinBody
 					Economy.award(player, amount, if headshot then "Headshot win!" else "Victory!")
-				elseif scores[e.team] > 0 then
-					Economy.award(player, P.LoserPerRound * scores[e.team], `{scores[e.team]} round(s) won`)
+				else
+					loserCoins(player, e.team)
 				end
 				local earned = X.Elimination * (kills[player] or 0)
 				Economy.awardXp(player, X.Finish + (if won then X.Win else 0) + earned)
-				if ranked and e.ranked then
+				if rankedMatch then
 					Economy.ranked(player, won)
 				end
 				Economy.matchResult(player, won, AntiCheat.flagsSince(player, matchStart) == 0)
@@ -651,7 +650,6 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	end
 
 	local function playMatch()
-		local scores: Scores = { Navy = 0, Grey = 0 }
 		table.clear(kills)
 		matchStart = os.clock()
 		state:SetAttribute("NavyScore", 0)
@@ -671,7 +669,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		local result: Result? = nil
 		while scores.Navy < Config.RoundsToWin and scores.Grey < Config.RoundsToWin and not forfeit do
 			round += 1
-			result = playRound(round, scores)
+			result = playRound(round)
 			if not result then
 				break
 			end
@@ -686,7 +684,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			decided = scores.Navy >= Config.RoundsToWin or scores.Grey >= Config.RoundsToWin
 			if decided then
 				local champion: TeamId = if scores.Navy >= Config.RoundsToWin then "Navy" else "Grey"
-				payout(champion, scores, lastZone == "Head")
+				payout(champion, lastZone == "Head")
 			end
 			banner("RoundEnd", { winner = result, detail = lastElimination, cutscene = true })
 			if not roundCutscenes(result :: Result) then
@@ -703,7 +701,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		setPhase("MatchEnd")
 		state:SetAttribute("Winner", winner)
 		banner("MatchEnd", { winner = winner, navy = scores.Navy, grey = scores.Grey, forfeit = forfeit ~= nil })
-		payout(winner, scores, not forfeit and lastZone == "Head")
+		payout(winner, not forfeit and lastZone == "Head")
 		table.clear(kills)
 		lastKill = nil
 		-- The fight is over: the celebration stage replaces the field for everyone in the match.
@@ -741,63 +739,78 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		end
 	end
 
-	-- Players queue for 1v1 or 2v2 separately. The next match takes the mode of whoever has waited
-	-- longest and fills from players who chose that mode (alternating Navy, Grey); bots take the empty
-	-- slots. Everyone else keeps their place for the next match.
-	local function waitingFor(mode: string): { Player }
-		local out = {}
-		for _, p in queue do
-			if modeOf[p] == mode then
-				table.insert(out, p)
-			end
+	-- Each map has a separate queue per mode and ranked setting, oldest first. A queue starts as soon as
+	-- it is full; a casual one also starts once its longest waiter has waited Config.QueueSeconds, with
+	-- bots in the empty slots (a ranked one waits for real players). Teams alternate Navy, Grey. A Bot
+	-- Bootcamp player is a queue of their own: a 1v1 against perfect bots, at once.
+	local function bucketOf(p: Player): string
+		if p:GetAttribute("Bootcamp") == true then
+			return "Bootcamp"
 		end
-		return out
+		return modeOf[p] .. (if p:GetAttribute("Ranked") == true then " ranked" else "")
 	end
 
-	local function pickRoster(): boolean
-		while #queue == 0 do
-			setPhase("Waiting")
-			task.wait(0.5)
-		end
-		state:SetAttribute("StartsAt", workspace:GetServerTimeNow() + Config.QueueSeconds)
-		setPhase("Starting")
-		local starts = os.clock() + Config.QueueSeconds
-		local mode, perTeam = "1v1", 1
-		-- A ranked queue never fills with bots: it waits for enough ranked players.
-		while os.clock() < starts or state:GetAttribute("Ranked") and #waitingFor(mode) < perTeam * 2 do
-			if #queue == 0 then
-				return false -- everyone left during the countdown
-			end
-			mode = modeOf[queue[1]] or "1v1"
-			perTeam = if mode == "2v2" then 2 else 1
-			state:SetAttribute("Mode", mode)
-			if #waitingFor(mode) >= perTeam * 2 or state:GetAttribute("Bootcamp") then
-				break -- full (a Bot Bootcamp queue is full with its one player): no need to wait
-			end
-			task.wait(0.2)
-		end
-		-- Someone flagged into Bot Bootcamp while waiting here can't share a match with other players.
-		if not state:GetAttribute("Bootcamp") then
-			for i = #queue, 1, -1 do
-				if queue[i]:GetAttribute("Bootcamp") then
-					local out = table.remove(queue, i) :: Player
-					modeOf[out] = nil
-					out:SetAttribute("Queued", nil)
-					out:SetAttribute("QueuedMode", nil)
-					Net.Toast:FireClient(out, "Bot Bootcamp", "Queue again to play your bootcamp match.")
+	-- The first queue ready to start (none: empty): its players in line order and the players per team.
+	local function readyBucket(): ({ Player }, number)
+		local seen: { [string]: boolean } = {}
+		for _, first in queue do
+			local key = bucketOf(first)
+			if key == "Bootcamp" then
+				return { first }, 1
+			elseif not seen[key] then
+				seen[key] = true
+				local perTeam = if modeOf[first] == "2v2" then 2 else 1
+				local members = {}
+				for _, p in queue do
+					if #members < perTeam * 2 and bucketOf(p) == key then
+						table.insert(members, p)
+					end
+				end
+				local timedOut = workspace:GetServerTimeNow() >= joinedAt[first] + Config.QueueSeconds
+				if #members == perTeam * 2 or (timedOut and first:GetAttribute("Ranked") ~= true) then
+					return members, perTeam
 				end
 			end
+		end
+		return {}, 1
+	end
+
+	local function dequeue(player: Player)
+		local i = table.find(queue, player)
+		modeOf[player], joinedAt[player] = nil, nil
+		if i then
+			table.remove(queue, i)
+			player:SetAttribute("Queued", nil)
+			player:SetAttribute("QueuedMode", nil)
 			setQueued()
 		end
-		local picked = waitingFor(mode)
-		if #picked == 0 then
-			return false -- the last one left as the countdown ended
+	end
+
+	local function pickRoster()
+		local picked, perTeam = readyBucket()
+		while #picked == 0 do
+			-- The lobby shows the longest waiter's queue and when it fills with bots.
+			local first = queue[1]
+			if first then
+				state:SetAttribute("Mode", modeOf[first])
+				state:SetAttribute("Ranked", first:GetAttribute("Ranked") == true)
+				state:SetAttribute("StartsAt", joinedAt[first] + Config.QueueSeconds)
+			end
+			setPhase(if first then "Starting" else "Waiting")
+			task.wait(0.2)
+			picked, perTeam = readyBucket()
 		end
 		-- A new match: from here a leaver's side can forfeit (Friends.pick below may yield).
 		forfeit = nil
 		decided = false
 		roster = {}
-		perfectBots = state:GetAttribute("Bootcamp") == true
+		scores = { Navy = 0, Grey = 0 }
+		perfectBots = bucketOf(picked[1]) == "Bootcamp"
+		-- A ranked queue only starts full, so every slot is a real player who entered ranked.
+		rankedMatch = not perfectBots and picked[1]:GetAttribute("Ranked") == true
+		state:SetAttribute("Mode", if perTeam == 2 then "2v2" else "1v1")
+		state:SetAttribute("Ranked", rankedMatch)
+		state:SetAttribute("Bootcamp", perfectBots)
 		local botNumber = 0
 		local humans: { Player } = {}
 		local botEntries: { Entry } = {}
@@ -805,17 +818,10 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			local team: TeamId = if i % 2 == 1 then "Navy" else "Grey"
 			local player = picked[i]
 			if player then
-				table.remove(queue, table.find(queue, player) :: number)
-				modeOf[player] = nil
-				player:SetAttribute("Queued", nil)
-				player:SetAttribute("QueuedMode", nil)
+				dequeue(player)
 				player:SetAttribute("Arena", id)
 				table.insert(humans, player)
-				local ranked = player:GetAttribute("Ranked") == true and not perfectBots
-				table.insert(
-					roster,
-					{ player = player, team = team, name = player.DisplayName, ranked = ranked } :: Entry
-				)
+				table.insert(roster, { player = player, team = team, name = player.DisplayName } :: Entry)
 			else
 				botNumber += 1
 				local name = if perTeam == 1 then Config.Bot.Name else `{Config.Bot.Name} {botNumber}`
@@ -831,8 +837,6 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 				botEntries[i].name = friend.name
 			end
 		end
-		setQueued()
-		return true
 	end
 
 	local arena: Arena
@@ -842,48 +846,27 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			if table.find(queue, player) then
 				return
 			end
-			-- The first in line picks ranked or casual; it stays fixed while the queue is non-empty, and
-			-- only players with the same ranked setting can join it. A Bot Bootcamp player only takes an
-			-- empty queue and locks it: nobody else joins their match.
-			local ranked = player:GetAttribute("Ranked") == true
-			local bootcamp = player:GetAttribute("Bootcamp") == true
-			if #queue == 0 and state:GetAttribute("Phase") ~= "Starting" then
-				state:SetAttribute("Ranked", ranked and not bootcamp)
-				state:SetAttribute("Bootcamp", bootcamp)
-			elseif bootcamp or state:GetAttribute("Bootcamp") == true then
-				local why = if bootcamp then "Bot Bootcamp is solo." else "A Bot Bootcamp match is starting."
-				Net.Toast:FireClient(player, "Map busy", `{why} Pick a map with nobody queued.`)
-				return
-			elseif (state:GetAttribute("Ranked") == true) ~= ranked then
-				local kind = if ranked then "casual" else "ranked"
-				Net.Toast:FireClient(player, "Queue is " .. kind, "Pick another map, or switch RANKED to match.")
-				return
-			end
 			modeOf[player] = if mode == "2v2" then "2v2" else "1v1"
+			joinedAt[player] = workspace:GetServerTimeNow()
 			table.insert(queue, player)
 			player:SetAttribute("Queued", id)
 			player:SetAttribute("QueuedMode", modeOf[player])
 			setQueued()
 		end,
 		leave = function(player)
-			local i = table.find(queue, player)
-			modeOf[player] = nil
-			if i then
-				table.remove(queue, i)
-				player:SetAttribute("Queued", nil)
-				player:SetAttribute("QueuedMode", nil)
-				setQueued()
-			end
+			dequeue(player)
 			local entry = inRoster(player)
 			if not entry or decided or entry.paid or state:GetAttribute("Phase") == "MatchEnd" then
 				return
 			end
-			-- Leaving mid-match is a saved loss; the leaver's slot goes to a bot from next round on.
-			Economy.matchResult(player, false, false)
-			if entry.ranked then
-				entry.ranked = false
+			-- Leaving mid-match settles the leaver now: a saved loss with the loser's coins for the rounds
+			-- their team has won so far (and rank points in a ranked match, which stays ranked for the
+			-- rest). The leaver's slot goes to a bot from next round on.
+			loserCoins(player, entry.team)
+			if rankedMatch then
 				Economy.ranked(player, false)
 			end
+			Economy.matchResult(player, false, false)
 			entry.player = nil
 			entry.name = `{Config.Bot.Name} (sub)`
 			if entry.combatant then
@@ -922,29 +905,29 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 
 	task.spawn(function()
 		while true do
-			if pickRoster() then
-				local ok = xpcall(playMatch, function(err)
-					warn(`[Arena {id}] match failed: {err}\n{debug.traceback()}`)
-				end)
-				if not ok then
-					if endCelebration then
-						pcall(endCelebration)
-						endCelebration = nil
-					end
-					pcall(clearField)
-					table.clear(kills)
-					lastKill = nil
-					for _, key in { "RoundEndsAt", "FreezeEndsAt", "Winner", "SuddenDeath" } do
-						state:SetAttribute(key, nil)
-					end
-					setPhase("Waiting")
-					local leaving = roster
-					roster = {}
-					for _, e in leaving do
-						if e.player and e.player.Parent then
-							e.player:SetAttribute("Celebrating", nil)
-							task.spawn(toLobby, e.player)
-						end
+			pickRoster()
+			local ok = xpcall(playMatch, function(err)
+				warn(`[Arena {id}] match failed: {err}\n{debug.traceback()}`)
+			end)
+			if not ok then
+				if endCelebration then
+					pcall(endCelebration)
+					endCelebration = nil
+				end
+				Report.roundEnd(id) -- a round that errored still closes its recording
+				pcall(clearField)
+				table.clear(kills)
+				lastKill = nil
+				for _, key in { "RoundEndsAt", "FreezeEndsAt", "Winner", "SuddenDeath" } do
+					state:SetAttribute(key, nil)
+				end
+				setPhase("Waiting")
+				local leaving = roster
+				roster = {}
+				for _, e in leaving do
+					if e.player and e.player.Parent then
+						e.player:SetAttribute("Celebrating", nil)
+						task.spawn(toLobby, e.player)
 					end
 				end
 			end
