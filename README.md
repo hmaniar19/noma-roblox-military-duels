@@ -10,7 +10,7 @@ The full design is in `research/brief.md`. Code lives in `src/` and syncs into R
 ## Play it
 
 1. `rojo build default.project.json -o MilitaryDuels.rbxl`, then open the file in Roblox Studio and press **Play**.
-2. A loading screen shows the dedication ("Military Duels — dedicated to Joanna & Eddie Moore"), then you spawn in **Camp More Maniar**, the lobby: the statue of Joanna and Eddie Moore, the shop, the armory, the coin leaderboard and a free **practice range** (walk up to a rack and press **E** to try any weapon on the target dummies; walk off the range or press LEAVE RANGE to stop). On your first join you pick your HUD colors and a starter weapon, or press **USE DEFAULTS & PLAY** to skip straight into a 1v1. Change colors any time with **SETTINGS**.
+2. A loading screen shows the dedication ("Military Duels — dedicated to Joanna & Eddie Moore"), then you spawn in **Camp More Maniar**, the lobby: the statue of Joanna and Eddie Moore, the shop, the armory, the **global leaderboard** (top levels and top wins across all servers) and a free **practice range** (walk up to a rack and press **E** to try any weapon on the target dummies; walk off the range or press LEAVE RANGE to stop). On your first join you pick your HUD colors and a starter weapon, or press **USE DEFAULTS & PLAY** to skip straight into a 1v1. Change colors any time with **SETTINGS**.
 3. On the bottom bar:
    - pick a map: **Shooting Range**, **Desert Outpost** or **Urban Training Town**;
    - pick **1v1** or **2v2**;
@@ -35,17 +35,18 @@ Rules:
   - a round won with a headshot plays the **bullet cam** (slow-motion bullet, "HEADSHOT — CRITICAL HIT");
   - every round win plays the **anime finisher** (freeze frame, zoom, speed lines, the winner's name card, stylized ink slashes, winner standing over the defeated player);
   - a draw plays the **handshake**: one fighter from each team walks to the middle and shakes hands.
-- The winning team gets a **celebration** in the sky above the arena, then everyone returns to the lobby.
+- The winning team gets a **celebration** in the sky above the arena (the losers kneel), then everyone returns to the lobby.
+- In matches everyone has the same standard body inside the team uniform (your face, clothes and accessories stay), so nobody's avatar is harder to hit.
 
 **Coins, levels and the shop** (no real money, ever):
 - Win: 120 coins if the match-winning elimination was a headshot, otherwise 80. Losers get 10 per round they won. New players get 350 once ("beginner's luck").
 - **XP and levels:** 50 XP for finishing a match, +100 for a win, +20 per elimination. Level 100 takes about 185 matches (2–3 weeks of normal play).
-- **Level rewards:** level 50 unlocks **Ranked** (toggle it on the lobby bar; a win moves 25 rank points from loser to winner), level 100 unlocks **Double Trouble**, level 200 the **Eddie's Honor** title and the gold salute emote, level 300 **A Mother's Wrath**.
+- **Level rewards:** level 50 unlocks **Ranked** (toggle it on the lobby bar; a win moves 25 rank points from loser to winner; if no ranked players turn up within 30 s, bots fill in and no rank points move), level 100 unlocks **Double Trouble**, level 200 the **Eddie's Honor** title (a gold name tag everyone sees) and the gold salute emote, level 300 **A Mother's Wrath**.
 - On your first join you choose a **starter weapon and its color** (a free skin, equipped on it).
 - **Shop › Skins** recolor weapons; equip them per weapon in **Inventory**.
 - **Shop › Weapons:** **Double Trouble** (twin dark katanas, melee) and **A Mother's Wrath** (dark-blue sniper with blue shots and lightning). They have exactly the stats of the Combat Knife and the Sniper; buy them with coins or reach their level, then pick them on the loadout screen.
-- **Shop › Finishers:** ink styles for your round-win anime finisher (Crimson is free).
-- **Emotes** (lobby): wave, cheer, dance and point are free for everyone; the gold salute needs Eddie's Honor.
+- **Shop › Finishers:** each finisher has its own ink color and camera move (Crimson is free); every finisher opens with a freeze frame.
+- **Emotes** (lobby): wave, cheer, dance, point, salute and handshake are free for everyone; the gold salute needs Eddie's Honor.
 - Developers listed in `Config.Developers` own every shop item for free.
 - Progress saves with DataStore on published places; in Studio without API access it lasts for the session.
 
