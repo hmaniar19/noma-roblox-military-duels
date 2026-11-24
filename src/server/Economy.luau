@@ -528,7 +528,9 @@ local function settings(player: Player, p: Profile, setting: any, a: any, b: any
 		end
 		p.hudTheme = theme
 	elseif setting == "Ranked" and typeof(a) == "boolean" then
-		if a == p.ranked or player:GetAttribute("Arena") ~= nil or player:GetAttribute("Queued") then
+		-- Locked below the unlock level: otherwise a saved "on" would switch ranked on by itself later.
+		local locked = not player:GetAttribute("RankedUnlocked")
+		if a == p.ranked or locked or player:GetAttribute("Arena") ~= nil or player:GetAttribute("Queued") then
 			return
 		end
 		p.ranked = a
