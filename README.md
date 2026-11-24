@@ -16,7 +16,7 @@ The full design is in `research/brief.md`. Code lives in `src/` and syncs into R
    - pick **1v1** or **2v2**;
    - press **PLAY**.
 
-   PLAY shows LOADING PROFILE until your save has loaded. 1v1 and 2v2 have separate queues on each map; a match fills from players who picked its mode, and bots fill empty slots after 10 s (ranked queues wait for real players). Bots wear the avatars and names of the players' Roblox friends. All three maps can run matches at the same time.
+   PLAY shows LOADING PROFILE until your save has loaded. 1v1 and 2v2 have separate queues on each map; a match fills from players who picked its mode, and bots fill empty slots after 10 s (30 s for ranked). Bots wear the avatars and names of the players' Roblox friends. All three maps can run matches at the same time.
 4. **Each round starts with a drop-in** (10 s), picked at random: a helicopter fast-rope, an army truck, a parachute jump or an armored car. Pick your loadout during the ride: a primary (Assault Rifle, SMG, Shotgun or Sniper), a melee and a gadget (Frag, Smoke or Med Kit). Everyone also carries a Pistol. You can't act until you land; the spawn shield starts at landing.
 5. Controls:
    - **click** fires or swings; **right-click** aims (the sniper scopes in)
