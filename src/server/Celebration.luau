@@ -1,9 +1,9 @@
 --!strict
 -- Match-win celebration, staged in the sky above the arena while everyone's camera sweeps across it
 -- (client: Hud). The winners stand on a podium: they cheer, dance, then stand menacingly with their
--- primary weapon, pointing down at the losers, who lie face down in front of them with a winner's
--- melee weapon planted in their backs. Confetti and fireworks in the winning team's color. Blocky
--- characters and no blood: within the game's Mild rating. Animations are Roblox's default R15 emotes.
+-- primary weapon, pointing down at the losers, who kneel dejected in front of them, heads bowed.
+-- Confetti and fireworks in the winning team's color. Blocky characters, no blood and no weapon
+-- touching anyone: within the game's Mild rating. Animations are Roblox's default R15 emotes.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
@@ -30,21 +30,21 @@ local function part(folder: Instance, size: Vector3, cf: CFrame, color: Color3, 
 	return p
 end
 
--- A weapon model on its own (not held), all parts anchored, planted point-down with its tip at `tip`.
-local function plant(folder: Instance, id: string, tip: Vector3)
-	local model = Instance.new("Model")
-	model.Name = id
-	local handle = Gun.build(model, id)
-	model.PrimaryPart = handle
-	local muzzle = handle:FindFirstChild("Muzzle") :: Attachment
-	local length = muzzle.Position.Magnitude
-	model:PivotTo(CFrame.lookAt(tip + Vector3.new(0, length, 0), tip))
+-- Kneeling, head bowed: shins folded back flat on the stage, back slumped.
+local KNEEL: { [string]: CFrame } = {
+	LeftKnee = CFrame.Angles(math.rad(-90), 0, 0),
+	RightKnee = CFrame.Angles(math.rad(-90), 0, 0),
+	Waist = CFrame.Angles(math.rad(-15), 0, 0),
+	Neck = CFrame.Angles(math.rad(-35), 0, 0),
+}
+
+local function kneel(model: Model)
 	for _, d in model:GetDescendants() do
-		if d:IsA("BasePart") then
-			d.Anchored = true
+		local turn = KNEEL[d.Name]
+		if turn and d:IsA("Motor6D") then
+			d.C0 *= turn
 		end
 	end
-	model.Parent = folder
 end
 
 local function equip(model: Model, id: string)
@@ -147,7 +147,7 @@ function Celebration.play(
 		return model
 	end
 
-	-- Winners on the podium facing the camera side (+z); losers face down in front of them.
+	-- Winners on the podium facing the camera side (+z); losers kneel in front of them, facing them.
 	local jobs = {}
 	for i, m in winners do
 		local x = (i - (#winners + 1) / 2) * 6
@@ -173,20 +173,11 @@ function Celebration.play(
 	end
 	for i, m in losers do
 		local x = (i - (#losers + 1) / 2) * 7
-		local blade = winners[((i - 1) % math.max(#winners, 1)) + 1]
 		table.insert(jobs, function()
-			local lying = stage * CFrame.new(x, 0.6, 2) * CFrame.Angles(-math.pi / 2, 0, 0)
-			local model = spawn(m, lying)
-			if not model then
-				return
-			end
-			local humanoid = model:FindFirstChildOfClass("Humanoid")
-			if humanoid then
-				humanoid.PlatformStand = true
-			end
-			if blade then
-				-- Planted point-down in their back, hilt up (the tip sits just inside the torso).
-				plant(folder, blade.melee, (stage * CFrame.new(x, 0.7, 2.3)).Position)
+			-- Lowered so the folded shins rest on the stage (a standing root is 3 studs up).
+			local model = spawn(m, stage * CFrame.new(x, 2.45, 2))
+			if model then
+				kneel(model)
 			end
 		end)
 	end

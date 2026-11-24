@@ -17,7 +17,7 @@ local UPRIGHT = CFrame.Angles(0, 0, math.pi / 2) -- turns a Cylinder part's X ax
 
 export type LobbyInfo = {
 	spawn: CFrame,
-	leaderboard: TextLabel,
+	leaderboard: { left: TextLabel, right: TextLabel }, -- the board's two columns
 	range: {
 		min: Vector3,
 		max: Vector3,
@@ -156,6 +156,7 @@ return function(origin: Vector3): LobbyInfo
 	local header = kit:sign(lb * CFrame.new(0, 17, 0), "LEADERBOARD", C.Olive, 16)
 	header.TextColor3 = GOLD
 	local leaderboard = kit:sign(lb * CFrame.new(0, 9, 0), "", NAVY, 16)
+	leaderboard.Size = UDim2.fromScale(0.5, 1)
 	boardOf(leaderboard).Size = Vector3.new(16, 12, 0.5)
 	leaderboard.TextScaled = true
 	leaderboard.TextWrapped = true
@@ -168,6 +169,9 @@ return function(origin: Vector3): LobbyInfo
 	pad.PaddingLeft = UDim.new(0.04, 0)
 	pad.PaddingRight = UDim.new(0.04, 0)
 	pad.Parent = leaderboard
+	local rightColumn = leaderboard:Clone()
+	rightColumn.Position = UDim2.fromScale(0.5, 0)
+	rightColumn.Parent = leaderboard.Parent
 
 	-- Sandbag emplacement opposite the leaderboard, plus sandbag decor along the south wall.
 	kit:sandbags(CFrame.new(-28, 0, -18), 10)
@@ -252,7 +256,7 @@ return function(origin: Vector3): LobbyInfo
 
 	return {
 		spawn = kit:at(CFrame.lookAt(Vector3.new(0, 3.5, 22), Vector3.new(0, 3.5, 0))),
-		leaderboard = leaderboard,
+		leaderboard = { left = leaderboard, right = rightColumn },
 		range = {
 			-- Starts a rack prompt's reach (9) behind the firing line, so taking a weapon is always "on the range".
 			min = kit.origin + Vector3.new(-22, -2, FIRE_Z - 10),

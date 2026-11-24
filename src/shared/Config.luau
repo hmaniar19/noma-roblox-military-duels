@@ -281,7 +281,9 @@ local Config = {
 		{ id = "Cheer", name = "Cheer", anim = "rbxassetid://507770677" },
 		{ id = "Dance", name = "Dance", anim = "rbxassetid://507771019" },
 		{ id = "Point", name = "Point", anim = "rbxassetid://507770453" },
-		{ id = "Salute", name = "Gold Salute", anim = "pose:salute", title = "EddiesHonor" },
+		{ id = "PlainSalute", name = "Salute", anim = "pose:salute" },
+		{ id = "Handshake", name = "Handshake", anim = "pose:handshake" },
+		{ id = "Salute", name = "Gold Salute", anim = "pose:goldsalute", title = "EddiesHonor" },
 	} :: { { id: string, name: string, anim: string, title: string? } },
 
 	-- First-join starter pick: a primary and its base color (a free starter skin for that weapon).
@@ -454,11 +456,11 @@ local Config = {
 	},
 
 	Sounds = {
-		-- Per-class shot cues: one Roblox-owned id, told apart by playback speed.
-		ShotPistol = { id = "rbxassetid://2781019930", speed = 1.25 },
-		ShotRifle = { id = "rbxassetid://2781019930", speed = 1 },
-		ShotShotgun = { id = "rbxassetid://2781019930", speed = 0.7 },
-		ShotSniper = { id = "rbxassetid://2781019930", speed = 0.55 },
+		-- Per-class shot cues: Roblox-owned classic sound, pitched per class.
+		ShotPistol = { id = "rbxassetid://12222084", speed = 2.2 },
+		ShotRifle = { id = "rbxassetid://12222084", speed = 1.9 },
+		ShotShotgun = { id = "rbxassetid://12222084", speed = 1.25 },
+		ShotSniper = { id = "rbxassetid://12222084", speed = 1.05 },
 		Hit = "rbxassetid://12222046",
 		Headshot = "rbxassetid://12221990",
 		Reload = "rbxassetid://12221976",

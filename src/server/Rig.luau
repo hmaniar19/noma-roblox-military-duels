@@ -1,8 +1,8 @@
 --!strict
--- Team uniform rig: every player keeps their own Roblox avatar (body parts, face, skin, hair and
--- accessories) dressed in their team's military uniform: team-colored body, helmet, vest and
--- armbands. Hats come off for the helmet; clothing comes off so the uniform shows. Body size is
--- standard so the look matches the hitbox; hit detection uses Config.Hitboxes, never these parts.
+-- Team uniform rig: every player keeps their own Roblox avatar (face, skin, hair and accessories)
+-- on the standard R15 body, dressed in their team's military uniform: team-colored body, helmet,
+-- vest and armbands. Hats come off for the helmet; clothing comes off so the uniform shows. Body
+-- parts and size are standard so the look matches the hitbox; hit detection uses Config.Hitboxes.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -23,11 +23,14 @@ local CLOTHING = {
 
 local descriptions: { [number]: HumanoidDescription } = {}
 
--- The avatar at standard size, without hats (the helmet takes their place) or clothing.
+-- The avatar on the standard R15 body at standard size, without hats (the helmet takes their
+-- place) or clothing.
 local function normalized(source: HumanoidDescription?): HumanoidDescription
 	local desc = if source then source:Clone() else Instance.new("HumanoidDescription")
 	desc.HeightScale, desc.WidthScale, desc.DepthScale, desc.HeadScale = 1, 1, 1, 1
 	desc.BodyTypeScale, desc.ProportionScale = 0, 0
+	desc.Head, desc.Torso = 0, 0
+	desc.LeftArm, desc.RightArm, desc.LeftLeg, desc.RightLeg = 0, 0, 0, 0
 	desc.HatAccessory = ""
 	pcall(function()
 		local keep = {}
@@ -206,31 +209,100 @@ function Rig.animate(model: Model, name: string, looped: boolean): AnimationTrac
 	return track
 end
 
--- Plays an emote from Config.Emotes: an animation id, or "pose:salute", built from code: the right
--- hand raised to the brow for two seconds with a gold glint.
+-- Poses built from code: the right shoulder's turn, held for two seconds.
+local POSES: { [string]: CFrame } = {
+	salute = CFrame.Angles(math.rad(150), math.rad(-35), math.rad(40)), -- hand raised to the brow
+	goldsalute = CFrame.Angles(math.rad(150), math.rad(-35), math.rad(40)),
+	handshake = CFrame.Angles(math.rad(75), 0, 0), -- right hand held out in front
+}
+
+-- Plays an emote from Config.Emotes: an animation id, or "pose:<name>" from POSES. The gold salute
+-- adds a gold glint.
 function Rig.emote(model: Model, anim: string)
-	if anim ~= "pose:salute" then
+	if anim:sub(1, 5) ~= "pose:" then
 		ANIMATIONS[anim] = anim
 		Rig.animate(model, anim, false)
 		return
 	end
+	local name = anim:sub(6)
+	local turn = POSES[name]
 	local arm = model:FindFirstChild("RightUpperArm")
 	local joint = arm and arm:FindFirstChild("RightShoulder")
-	local hand = model:FindFirstChild("RightHand")
-	if not joint or not joint:IsA("Motor6D") or model:GetAttribute("Saluting") then
+	if not turn or not joint or not joint:IsA("Motor6D") or model:GetAttribute("Posing") then
 		return
 	end
-	model:SetAttribute("Saluting", true)
+	model:SetAttribute("Posing", true)
 	local rest = joint.C0
-	joint.C0 = rest * CFrame.Angles(math.rad(150), math.rad(-35), math.rad(40))
-	local glint = Instance.new("Sparkles")
-	glint.SparkleColor = Color3.fromRGB(235, 190, 60)
-	glint.Parent = hand
+	joint.C0 = rest * turn
+	local glint: Sparkles? = nil
+	if name == "goldsalute" then
+		local sparkles = Instance.new("Sparkles")
+		sparkles.SparkleColor = Color3.fromRGB(235, 190, 60)
+		sparkles.Parent = model:FindFirstChild("RightHand")
+		glint = sparkles
+	end
 	task.delay(2, function()
 		joint.C0 = rest
-		glint:Destroy()
-		model:SetAttribute("Saluting", nil)
+		if glint then
+			glint:Destroy()
+		end
+		model:SetAttribute("Posing", nil)
 	end)
+end
+
+-- The "EDDIE'S HONOR" name tag over a level-200 player's head, on every character (lobby, arenas,
+-- celebration). Hidden from its owner, whose first-person camera sits right under it.
+local function titleTag(player: Player, character: Model)
+	local head = character:WaitForChild("Head", 5)
+	if not head or player.Character ~= character then
+		return
+	end
+	local old = head:FindFirstChild("TitleTag")
+	if old then
+		old:Destroy()
+	end
+	if player:GetAttribute("Title") ~= "EddiesHonor" then
+		return
+	end
+	local tag = Instance.new("BillboardGui")
+	tag.Name = "TitleTag"
+	tag.Size = UDim2.fromScale(4, 0.6)
+	tag.StudsOffset = Vector3.new(0, 2.4, 0)
+	tag.AlwaysOnTop = false
+	tag.MaxDistance = 60
+	tag.LightInfluence = 0
+	tag.PlayerToHideFrom = player
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Text = "EDDIE'S HONOR"
+	label.TextScaled = true
+	label.Font = Enum.Font.GothamBold
+	label.TextColor3 = Color3.fromRGB(235, 190, 60)
+	label.TextStrokeColor3 = Color3.fromRGB(60, 40, 0)
+	label.TextStrokeTransparency = 0.2
+	label.Parent = tag
+	tag.Parent = head
+end
+
+local function watchTitle(player: Player)
+	player.CharacterAdded:Connect(function(character)
+		titleTag(player, character)
+	end)
+	player:GetAttributeChangedSignal("Title"):Connect(function()
+		local character = player.Character
+		if character then
+			titleTag(player, character)
+		end
+	end)
+	local character = player.Character
+	if character then
+		titleTag(player, character)
+	end
+end
+Players.PlayerAdded:Connect(watchTitle)
+for _, player in Players:GetPlayers() do
+	task.spawn(watchTitle, player)
 end
 
 return Rig

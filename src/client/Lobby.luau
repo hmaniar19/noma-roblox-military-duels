@@ -622,7 +622,7 @@ RunService.RenderStepped:Connect(function()
 			for _, skin in Config.Skins do
 				local b = row[skin.id]
 				if b then
-					b.Visible = owned[skin.id] == true
+					b.Visible = owned[skin.id] == true or Profile.owns(player, weapon .. "_" .. skin.id)
 					if b.Visible then
 						b.Position = UDim2.fromOffset(170 + column * 70, b.Position.Y.Offset)
 						column += 1

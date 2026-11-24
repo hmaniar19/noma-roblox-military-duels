@@ -1,4 +1,5 @@
 --!strict
+local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -20,6 +21,17 @@ local BRASS = Color3.fromRGB(214, 170, 72)
 local CENTER = Vector2.new(0.5, 0.5)
 local HEAVY = Enum.Font.GothamBlack
 local HIT_TEXT = "HEADSHOT — CRITICAL HIT"
+local FREEZE = 0.35 -- the finisher's opening freeze frame, in seconds
+local MAX_SHIFT = 4 -- the finisher camera never strays further than this from the server's cleared spot
+
+-- Each finisher (Config.Finishers id) gets its own camera move on top of its ink.
+local FINISHER_STYLES: { [string]: string } = {
+	Crimson = "default",
+	Midnight = "low",
+	Gold = "split",
+	Sakura = "orbit",
+	Thunder = "slam",
+}
 
 type Session = {
 	token: any,
@@ -97,6 +109,26 @@ local function flatSide(axis: Vector3): Vector3
 	return flat.Unit:Cross(Vector3.yAxis).Unit
 end
 
+-- The server sends the finisher's ink, which maps back to its id; the winner's attribute covers a missing ink.
+local function finisherStyle(data: { [string]: any }): string
+	local id: any = data.finisher
+	if typeof(id) ~= "string" then
+		for _, f in Config.Finishers do
+			if f.ink == data.ink then
+				id = f.id
+			end
+		end
+	end
+	if typeof(id) ~= "string" then
+		for _, other in Players:GetPlayers() do
+			if other.DisplayName == data.winnerName then
+				id = other:GetAttribute("Finisher")
+			end
+		end
+	end
+	return if typeof(id) == "string" then FINISHER_STYLES[id] or "default" else "default"
+end
+
 local builders: { [string]: Builder } = {}
 
 builders.BulletCam = function(s, data)
@@ -167,6 +199,25 @@ builders.Finisher = function(s, data, length)
 	local offset = target - camera
 	local push = if offset.Magnitude > 1 then offset.Unit * 0.8 else Vector3.zero
 	local ink: Color3 = if typeof(data.ink) == "Color3" then data.ink else INK_RED
+	local style = finisherStyle(data)
+	local dir = if offset.Magnitude > 1 then offset.Unit else Vector3.zAxis
+	local flat = Vector3.new(dir.X, 0, dir.Z)
+	flat = if flat.Magnitude > 0.1 then flat.Unit else Vector3.zero
+	local head = won + Vector3.new(0, 1.5, 0)
+	-- A 90° arc on a circle this small keeps the orbit inside MAX_SHIFT of the cleared spot.
+	local pivot = camera + flat * 2.8
+
+	-- Freeze frame: a white flash over a drained, punchy grade that eases back as the zoom starts.
+	local grade = make("ColorCorrectionEffect", { Saturation = -1, Contrast = 0.3 }, Lighting)
+	table.insert(s.instances, grade)
+	tween(s, grade, { Saturation = 0, Contrast = 0 }, 0.45, FREEZE)
+	local flash = make("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = WHITE,
+		BorderSizePixel = 0,
+		ZIndex = 10,
+	}, gui)
+	tween(s, flash, { BackgroundTransparency = 1 }, FREEZE)
 
 	for i = 1, 36 do
 		local angle = (i / 36) * math.pi * 2 + rng:NextNumber(-0.08, 0.08)
@@ -183,21 +234,21 @@ builders.Finisher = function(s, data, length)
 			ZIndex = 1,
 		}, gui)
 		local goal = { Position = UDim2.new(0.5, cos * (r0 + 750), 0.5, sin * (r0 + 750)), BackgroundTransparency = 1 }
-		tween(s, line, goal, 0.45, rng:NextNumber(0, 0.3), Enum.EasingStyle.Quad, -1)
+		tween(s, line, goal, 0.45, FREEZE + rng:NextNumber(0, 0.3), Enum.EasingStyle.Quad, -1)
 	end
 
 	local slashes: { { number } } = { { 0.36, 0.3, -32, 20 }, { 0.62, 0.42, -22, 14 }, { 0.5, 0.22, 26, 10 } }
 	for i, sd in slashes do
 		local slash = inkFrame(UDim2.fromScale(sd[1], sd[2]), sd[3], ink)
 		slash.Size = UDim2.fromOffset(0, sd[4])
-		tween(s, slash, { Size = UDim2.new(1.1, 0, 0, sd[4]) }, 0.14, 0.1 + i * 0.18)
+		tween(s, slash, { Size = UDim2.new(1.1, 0, 0, sd[4]) }, 0.14, FREEZE + 0.1 + i * 0.18)
 		tween(s, slash, { BackgroundTransparency = 1 }, 0.6, length - 1.1)
 	end
 
 	for _ = 1, 8 do
 		local size = rng:NextInteger(18, 80)
 		local dot = inkFrame(UDim2.fromScale(rng:NextNumber(0.2, 0.8), rng:NextNumber(0.12, 0.55)), 0, ink)
-		local delay = 0.3 + rng:NextNumber(0, 0.6)
+		local delay = FREEZE + 0.3 + rng:NextNumber(0, 0.6)
 		tween(s, dot, { Size = UDim2.fromOffset(size, size) }, 0.18, delay, Enum.EasingStyle.Back)
 		tween(s, dot, { BackgroundTransparency = 1 }, 0.7, delay + 1.1)
 	end
@@ -222,12 +273,44 @@ builders.Finisher = function(s, data, length)
 	local winner = string.upper(tostring(data.winnerName))
 	label(banner, winner, Enum.Font.GothamBlack, UDim2.new(0.5, 0, 0, 56), UDim2.new(0.6, 0, 0, 80))
 	label(banner, "WINS THE ROUND", Enum.Font.GothamBold, UDim2.new(0.5, 0, 0, 118), UDim2.new(0.6, 0, 0, 40))
-	tween(s, banner, { Position = UDim2.fromScale(0.5, 0.74) }, 0.35, 0.25, Enum.EasingStyle.Back)
+	tween(s, banner, { Position = UDim2.fromScale(0.5, 0.74) }, 0.35, FREEZE + 0.25, Enum.EasingStyle.Back)
 
 	return function(t)
-		local e = 1 - (1 - math.clamp(t / 0.45, 0, 1)) ^ 3
-		local pos = camera + push * math.clamp(t / length, 0, 1)
-		return CFrame.lookAt(pos, target, up) * CFrame.Angles(0, 0, math.rad(-10 * e)), 70 - 32 * e
+		if t < FREEZE then
+			return CFrame.lookAt(camera, target, up), 70
+		end
+		local z = t - FREEZE
+		local e = 1 - (1 - math.clamp(z / 0.45, 0, 1)) ^ 3
+		local p = math.clamp(z / math.max(length - FREEZE, 0.1), 0, 1)
+		local pos, look, frameUp, fov, roll = camera + push * p, target, up, 70 - 32 * e, -10 * e
+		if style == "orbit" then
+			local turn = CFrame.Angles(0, math.rad(90) * (1 - (1 - p) ^ 2), 0)
+			if data.overhead then
+				frameUp = turn:VectorToWorldSpace(up)
+			else
+				pos = pivot + turn:VectorToWorldSpace(camera - pivot)
+			end
+			look, fov, roll = head, 70 - 25 * e, 0
+		elseif style == "slam" then
+			local hit = 1 - (1 - math.clamp(z / 0.2, 0, 1)) ^ 4
+			local shake = 0.35 * math.max(1 - z / 0.7, 0)
+			pos = camera + dir * (MAX_SHIFT * 0.85 * hit) + rng:NextUnitVector() * shake
+			fov, roll = 70 - 36 * hit, -6 * hit + rng:NextNumber(-20, 20) * shake
+		elseif style == "low" and not data.overhead then
+			pos = camera + (flat * 2.5 - Vector3.new(0, 0.8, 0)) * e + push * p
+			look, fov, roll = won + Vector3.new(0, 2.6, 0), 70 - 28 * e, 8 * e
+		elseif style == "split" then
+			if p < 0.45 then
+				pos, look, fov, roll = camera + (head - camera).Unit * MAX_SHIFT, head, 32, -6
+			else
+				fov, roll = 80 - 8 * (p - 0.45) / 0.55, 0
+			end
+		end
+		local shift = pos - camera
+		if shift.Magnitude > MAX_SHIFT then
+			pos = camera + shift.Unit * MAX_SHIFT
+		end
+		return CFrame.lookAt(pos, look, frameUp) * CFrame.Angles(0, 0, math.rad(roll)), fov
 	end
 end
 

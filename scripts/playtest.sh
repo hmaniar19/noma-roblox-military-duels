@@ -75,6 +75,24 @@ done
 give_back_focus
 [[ -n "$found" ]] || { echo "PLAYTEST Studio window never came up"; close_window; exit 1; }
 
+# PLAYTEST_WINDOW="x,y,w,h" (top-left screen points) puts the test window there, e.g. on a second
+# display, so the run can be watched; PLAYTEST_SHOTS=<dir> then screenshots that region every 15 s.
+shots_pid=""
+if [[ -n "${PLAYTEST_WINDOW:-}" ]]; then
+	IFS=, read -r wx wy ww wh <<<"$PLAYTEST_WINDOW"
+	osascript -e "tell application \"System Events\" to tell process \"RobloxStudio\"
+		repeat with w in (every window whose name contains \"playtest.rbxl\")
+			set position of w to {$wx, $wy}
+			set size of w to {$ww, $wh}
+		end repeat
+	end tell" >/dev/null 2>&1 || true
+	if [[ -n "${PLAYTEST_SHOTS:-}" ]]; then
+		mkdir -p "$PLAYTEST_SHOTS"
+		(n=0; while true; do sleep 15; n=$((n + 1)); screencapture -x -R"$wx,$wy,$ww,$wh" "$PLAYTEST_SHOTS/$(printf %03d $n).png"; done) &
+		shots_pid=$!
+	fi
+fi
+
 # Press Play through Studio's menu (Test → Start Test Session → Test). A menu click goes to Studio
 # even in the background, so the owner's keyboard and front app are never touched. Retry if no test
 # output shows up (Studio may still have been loading).
@@ -116,6 +134,7 @@ if (( errors > 0 )); then
 	echo "PLAYTEST script errors: $errors"
 	grep "CreatorError\|Info: Script '" "$log" | cut -c1-240 | head -20
 fi
+[[ -n "$shots_pid" ]] && kill "$shots_pid" 2>/dev/null
 done_both=$(grep -c "PLAYTEST SERVER DONE\|PLAYTEST CLIENT DONE" "$log" || true)
 fails=$(grep -c "PLAYTEST FAIL" "$log" || true)
 if (( fails > 0 || errors > 0 || done_both < 2 )); then

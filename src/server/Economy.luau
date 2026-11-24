@@ -39,6 +39,16 @@ end)
 local profiles: { [Player]: Profile } = {}
 local loaded: { [Player]: boolean } = {}
 local warnedNoSave = false
+-- The global leaderboard: total XP and wins per player, keyed like the profiles.
+local okBoards, boards = pcall(function()
+	return {
+		levels = DataStoreService:GetOrderedDataStore("MilitaryDuels_TopLevel"),
+		wins = DataStoreService:GetOrderedDataStore("MilitaryDuels_TopWins"),
+	}
+end)
+local boardSent: { [number]: { xp: number?, wins: number? } } = {} -- last values this server wrote
+local names: { [number]: string } = {}
+local globalTop: { levels: string, wins: string }? = nil -- nil until the stores can be read
 
 -- Everything coins can buy, by id.
 type Item = { name: string, price: number, kind: string }
@@ -87,6 +97,11 @@ local function owns(player: Player, p: Profile, id: string): boolean
 		or (Config.Developers[player.UserId] ~= nil and item ~= nil)
 end
 
+-- A skin usable on a weapon: owned, or the free starter colour on the starter weapon only.
+local function ownsSkin(player: Player, p: Profile, weapon: string, skin: string): boolean
+	return owns(player, p, skin) or (skin == p.starterSkin and weapon == p.starter)
+end
+
 -- A child folder of the player (made once), for data published apart from the player's own
 -- attributes: Roblox caps one instance's attributes at 1024 bytes in total.
 local function folder(player: Player, name: string): Folder
@@ -123,6 +138,10 @@ local function publish(player: Player, p: Profile)
 	for id in CATALOG do
 		owned:SetAttribute(id, if owns(player, p, id) then true else nil)
 	end
+	-- The starter colour as "<weapon>_<skin>": a plain skin id would show it as owned on every weapon.
+	if p.starter and p.starterSkin then
+		owned:SetAttribute(`{p.starter}_{p.starterSkin}`, true)
+	end
 	for weapon in Config.Weapons do
 		skins:SetAttribute(weapon, p.equipped[weapon] or "Standard")
 	end
@@ -140,6 +159,26 @@ local lastSave: { [Player]: number } = {}
 
 local function markDirty(player: Player)
 	dirty[player] = true
+end
+
+-- Copies a committed profile's XP and wins to the leaderboard stores, each only when it changed since
+-- this server last wrote it (the first save of a visit writes both).
+local function postBoards(userId: number, xp: number, wins: number)
+	if not okBoards then
+		return
+	end
+	local sent: { xp: number?, wins: number? } = boardSent[userId] or {}
+	boardSent[userId] = sent
+	if sent.xp ~= xp and pcall(function()
+		boards.levels:SetAsync(`player_{userId}`, xp)
+	end) then
+		sent.xp = xp
+	end
+	if sent.wins ~= wins and pcall(function()
+		boards.wins:SetAsync(`player_{userId}`, wins)
+	end) then
+		sent.wins = wins
+	end
 end
 
 local function save(player: Player, release: boolean?)
@@ -162,8 +201,12 @@ local function save(player: Player, release: boolean?)
 			return snap
 		end)
 	end)
+	local committed = ok and typeof(result) == "table" and result.rev == snap.rev
+	if committed then
+		postBoards(player.UserId, snap.xp, snap.wins)
+	end
 	saving[player] = nil
-	if not (ok and typeof(result) == "table" and result.rev == snap.rev) then
+	if not committed then
 		dirty[player] = true -- cancelled or failed: retried by the save loop
 		if not ok and not warnedNoSave then
 			warnedNoSave = true
@@ -409,8 +452,51 @@ function Economy.finisherInk(player: Player?): Color3?
 	return nil
 end
 
--- Leaderboard text: the richest players and, when anyone plays ranked, the top rank points.
-function Economy.leaderboard(rowsShown: number): string
+local function nameOf(userId: number): string
+	if not names[userId] then
+		local ok, name = pcall(function()
+			return Players:GetNameFromUserIdAsync(userId)
+		end)
+		names[userId] = if ok then name else nil
+	end
+	return names[userId] or "Soldier"
+end
+
+-- One column of the global board: the top 10 of an ordered store, or nil when it can't be read.
+local function topOf(board: OrderedDataStore, title: string, show: (number) -> string): string?
+	local ok, page = pcall(function()
+		return board:GetSortedAsync(false, 10):GetCurrentPage()
+	end)
+	if not ok then
+		return nil
+	end
+	local lines = { title }
+	for i, row in page do
+		local userId = tonumber(string.match(row.key, "^player_(%d+)$"))
+		local name = if userId then nameOf(userId) else "Soldier"
+		table.insert(lines, `{i}. {name}   {show(row.value)}`)
+	end
+	return table.concat(lines, "\n")
+end
+
+local function refreshTop()
+	local levels = topOf(boards.levels, "TOP LEVELS", function(xp)
+		return `Lv {levelOf(xp)}`
+	end)
+	local wins = topOf(boards.wins, "TOP WINS", function(n)
+		return `{n} wins`
+	end)
+	if levels and wins then
+		globalTop = { levels = levels, wins = wins }
+	end
+end
+
+-- The board's two columns: the all-time top levels and wins, or, until the saved board can be read
+-- (Studio without API access), this server's richest players and top rank points.
+function Economy.leaderboard(rowsShown: number): (string, string)
+	if globalTop then
+		return globalTop.levels, globalTop.wins
+	end
 	local rows = {}
 	for player, p in profiles do
 		table.insert(rows, { name = player.DisplayName, coins = p.coins, rp = p.rp, ranked = p.ranked })
@@ -418,24 +504,20 @@ function Economy.leaderboard(rowsShown: number): string
 	table.sort(rows, function(a, b)
 		return a.coins > b.coins
 	end)
-	local lines = { "TOP SOLDIERS" }
+	local left = { "TOP SOLDIERS" }
 	for i = 1, math.min(rowsShown, #rows) do
-		table.insert(lines, `{i}. {rows[i].name}   {rows[i].coins} coins`)
+		table.insert(left, `{i}. {rows[i].name}   {rows[i].coins} coins`)
 	end
 	table.sort(rows, function(a, b)
 		return a.rp > b.rp
 	end)
-	local ranked = 0
+	local right = { "RANKED" }
 	for _, r in rows do
-		if r.ranked and ranked < 3 then
-			ranked += 1
-			if ranked == 1 then
-				table.insert(lines, "RANKED")
-			end
-			table.insert(lines, `{ranked}. {r.name}   {r.rp} RP`)
+		if r.ranked and #right <= rowsShown then
+			table.insert(right, `{#right}. {r.name}   {r.rp} RP`)
 		end
 	end
-	return table.concat(lines, "\n")
+	return table.concat(left, "\n"), table.concat(right, "\n")
 end
 
 local function settings(player: Player, p: Profile, setting: any, a: any, b: any)
@@ -513,7 +595,7 @@ function Economy.bind()
 			and typeof(b) == "string"
 			and CATALOG[b]
 			and CATALOG[b].kind == "Skin"
-			and (owns(player, p, b) or (b == p.starterSkin and a == p.starter))
+			and ownsSkin(player, p, a, b)
 			and p.equipped[a] ~= b
 		then
 			p.equipped[a] = b
@@ -530,7 +612,14 @@ function Economy.bind()
 		task.defer(function()
 			flush(player, true)
 			profiles[player], loaded[player], dirty[player], lastSave[player] = nil, nil, nil, nil
+			boardSent[player.UserId] = nil
 		end)
+	end)
+	task.spawn(function()
+		while okBoards do
+			refreshTop()
+			task.wait(60)
+		end
 	end)
 	task.spawn(function()
 		local refreshed = os.clock()

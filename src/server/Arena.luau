@@ -1,7 +1,7 @@
 --!strict
 -- One arena per map, all running at once. Players queue for a map and a mode (1v1 or 2v2) from the
 -- Camp More Maniar lobby; each mode and ranked setting has its own queue per map (bots fill empty
--- slots in casual ones). A match is first to 5 round wins. Each round:
+-- slots that nobody joins in time). A match is first to 5 round wins. Each round:
 -- an 8-second freeze to pick a loadout, 2:00 live, then a win, loss or draw. Sides swap every round;
 -- at 4-4 each team plays Sudden Death with one sniper and one knife. A player who leaves or concedes is
 -- replaced by a bot and the match counts as their loss; a team with no players left forfeits. After the match
@@ -740,14 +740,19 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 	end
 
 	-- Each map has a separate queue per mode and ranked setting, oldest first. A queue starts as soon as
-	-- it is full; a casual one also starts once its longest waiter has waited Config.QueueSeconds, with
-	-- bots in the empty slots (a ranked one waits for real players). Teams alternate Navy, Grey. A Bot
-	-- Bootcamp player is a queue of their own: a 1v1 against perfect bots, at once.
+	-- it is full, or once its longest waiter has waited Config.QueueSeconds (20 s more for ranked, to
+	-- give other ranked players a chance) with bots in the empty slots. Teams alternate Navy, Grey. A
+	-- Bot Bootcamp player is a queue of their own: a 1v1 against perfect bots, at once.
 	local function bucketOf(p: Player): string
 		if p:GetAttribute("Bootcamp") == true then
 			return "Bootcamp"
 		end
 		return modeOf[p] .. (if p:GetAttribute("Ranked") == true then " ranked" else "")
+	end
+
+	-- When the queue `first` waits in fills its empty slots with bots.
+	local function startsAt(first: Player): number
+		return joinedAt[first] + Config.QueueSeconds + (if first:GetAttribute("Ranked") == true then 20 else 0)
 	end
 
 	-- The first queue ready to start (none: empty): its players in line order and the players per team.
@@ -766,8 +771,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 						table.insert(members, p)
 					end
 				end
-				local timedOut = workspace:GetServerTimeNow() >= joinedAt[first] + Config.QueueSeconds
-				if #members == perTeam * 2 or (timedOut and first:GetAttribute("Ranked") ~= true) then
+				if #members == perTeam * 2 or workspace:GetServerTimeNow() >= startsAt(first) then
 					return members, perTeam
 				end
 			end
@@ -794,7 +798,7 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			if first then
 				state:SetAttribute("Mode", modeOf[first])
 				state:SetAttribute("Ranked", first:GetAttribute("Ranked") == true)
-				state:SetAttribute("StartsAt", joinedAt[first] + Config.QueueSeconds)
+				state:SetAttribute("StartsAt", startsAt(first))
 			end
 			setPhase(if first then "Starting" else "Waiting")
 			task.wait(0.2)
@@ -806,8 +810,10 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 		roster = {}
 		scores = { Navy = 0, Grey = 0 }
 		perfectBots = bucketOf(picked[1]) == "Bootcamp"
-		-- A ranked queue only starts full, so every slot is a real player who entered ranked.
-		rankedMatch = not perfectBots and picked[1]:GetAttribute("Ranked") == true
+		-- Rank points only move when every slot is a real player who entered ranked: a ranked queue
+		-- that timed out plays bots as a casual match.
+		local rankedQueue = not perfectBots and picked[1]:GetAttribute("Ranked") == true
+		rankedMatch = rankedQueue and #picked == perTeam * 2
 		state:SetAttribute("Mode", if perTeam == 2 then "2v2" else "1v1")
 		state:SetAttribute("Ranked", rankedMatch)
 		state:SetAttribute("Bootcamp", perfectBots)
@@ -835,6 +841,11 @@ function Arena.new(info: MapKit.MapInfo, toLobby: (Player) -> ()): Arena
 			for i, friend in Friends.pick(humans, #botEntries) do
 				botEntries[i].userId = friend.userId
 				botEntries[i].name = friend.name
+			end
+		end
+		if rankedQueue and not rankedMatch then
+			for _, h in humans do
+				Net.Toast:FireClient(h, "No ranked players around", "Playing bots (no rank points).")
 			end
 		end
 	end

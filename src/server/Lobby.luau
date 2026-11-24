@@ -157,7 +157,8 @@ function Lobby.run(world: World.World)
 	end)
 
 	while true do
-		world.lobby.leaderboard.Text = Economy.leaderboard(8)
+		local board = world.lobby.leaderboard
+		board.left.Text, board.right.Text = Economy.leaderboard(10)
 		task.wait(5)
 	end
 end
